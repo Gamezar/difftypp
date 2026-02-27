@@ -2,9 +2,9 @@
 <div class="max-w-3xl mx-auto">
     <div class="flex items-center gap-2 mb-6">
         {{ if .SelectedFile }}
-            <a href="/diff?repo={{.RepoPath}}&source={{.SourceBranch}}&target={{.TargetBranch}}&source_commit={{.SourceCommit}}&target_commit={{.TargetCommit}}" class="text-blue-600 hover:underline">← Back to Files</a>
+            <a href="/diff?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&mode={{urlquery .DiffMode}}" class="text-blue-600 hover:underline">&larr; Back to Files</a>
         {{ else }}
-            <a href="/compare?repo={{.RepoPath}}" class="text-blue-600 hover:underline">← Back to Branch Selection</a>
+            <a href="/compare?repo={{urlquery .RepoPath}}&mode={{urlquery .DiffMode}}" class="text-blue-600 hover:underline">&larr; Back to {{if eq .DiffMode "branches"}}Branch Selection{{else if eq .DiffMode "commits"}}Commit Selection{{else}}Compare{{end}}</a>
         {{ end }}
         <span class="text-gray-500">/</span>
         <h2 class="text-xl font-bold">{{.RepoName}}</h2>
@@ -13,27 +13,27 @@
     <div class="bg-white shadow rounded-lg p-4 mb-6">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div class="flex items-center">
-                <span class="text-gray-600 font-medium">{{.SourceBranch}}</span>
+                <span class="text-gray-600 font-medium">{{.SourceLabel}}</span>
                 <svg class="mx-2 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
                 </svg>
-                <span class="text-gray-600 font-medium">{{.TargetBranch}}</span>
+                <span class="text-gray-600 font-medium">{{.TargetLabel}}</span>
             </div>
             
             {{ if .SelectedFile }}
             <div class="flex items-center">
                 <span class="mr-2">Mark as:</span>
-                <form method="POST" action="/api/review-state?repo={{.RepoPath}}&source={{.SourceBranch}}&target={{.TargetBranch}}&source_commit={{.SourceCommit}}&target_commit={{.TargetCommit}}&file={{.SelectedFile}}&status=approved{{if .NextFilePath}}&next={{.NextFilePath}}{{end}}" class="inline mx-1 review-form">
+                <form method="POST" action="/api/review-state?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&file={{urlquery .SelectedFile}}&status=approved&mode={{urlquery .DiffMode}}{{if .NextFilePath}}&next={{urlquery .NextFilePath}}{{end}}" class="inline mx-1 review-form">
                     <button type="submit" class="px-3 py-1 bg-green-100 text-green-800 rounded hover:bg-green-200" title="Approve (a)">
                         <span class="inline-flex items-center">Approve <span class="ml-1 key-hint">a</span></span>
                     </button>
                 </form>
-                <form method="POST" action="/api/review-state?repo={{.RepoPath}}&source={{.SourceBranch}}&target={{.TargetBranch}}&source_commit={{.SourceCommit}}&target_commit={{.TargetCommit}}&file={{.SelectedFile}}&status=rejected{{if .NextFilePath}}&next={{.NextFilePath}}{{end}}" class="inline mx-1 review-form">
+                <form method="POST" action="/api/review-state?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&file={{urlquery .SelectedFile}}&status=rejected&mode={{urlquery .DiffMode}}{{if .NextFilePath}}&next={{urlquery .NextFilePath}}{{end}}" class="inline mx-1 review-form">
                     <button type="submit" class="px-3 py-1 bg-red-100 text-red-800 rounded hover:bg-red-200" title="Reject (r)">
                         <span class="inline-flex items-center">Reject <span class="ml-1 key-hint">r</span></span>
                     </button>
                 </form>
-                <form method="POST" action="/api/review-state?repo={{.RepoPath}}&source={{.SourceBranch}}&target={{.TargetBranch}}&source_commit={{.SourceCommit}}&target_commit={{.TargetCommit}}&file={{.SelectedFile}}&status=skipped{{if .NextFilePath}}&next={{.NextFilePath}}{{end}}" class="inline mx-1 review-form">
+                <form method="POST" action="/api/review-state?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&file={{urlquery .SelectedFile}}&status=skipped&mode={{urlquery .DiffMode}}{{if .NextFilePath}}&next={{urlquery .NextFilePath}}{{end}}" class="inline mx-1 review-form">
                     <button type="submit" class="px-3 py-1 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200" title="Skip (s)">
                         <span class="inline-flex items-center">Skip <span class="ml-1 key-hint">s</span></span>
                     </button>
@@ -63,7 +63,7 @@
     {{ else }}
         {{ if .NoDiff }}
             <div class="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-6">
-                <p>No differences found between these branches.</p>
+                <p>No differences found{{if eq .DiffMode "staged"}} in staged changes{{else if eq .DiffMode "unstaged"}} in working tree{{else}} between these refs{{end}}.</p>
             </div>
         {{else}}
             {{if .SelectedFile}}
@@ -71,12 +71,12 @@
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="font-mono text-lg font-medium">{{.SelectedFile}}</h3>
                         <div class="flex space-x-2">
-                            <button id="prev-file" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300" title="Previous file (←)">
+                            <button id="prev-file" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300" title="Previous file (&larr;)">
                                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
                                 </svg>
                             </button>
-                            <button id="next-file" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300" title="Next file (→)">
+                            <button id="next-file" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300" title="Next file (&rarr;)">
                                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                 </svg>
@@ -117,7 +117,7 @@
                                             <span class="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs rounded-full">Skipped</span>
                                         {{end}}
                                     </div>
-                                    <a href="/diff?repo={{$.RepoPath}}&source={{$.SourceBranch}}&target={{$.TargetBranch}}&source_commit={{$.SourceCommit}}&target_commit={{$.TargetCommit}}&file={{.Path}}" 
+                                    <a href="/diff?repo={{urlquery $.RepoPath}}&source={{urlquery $.SourceBranch}}&target={{urlquery $.TargetBranch}}&source_commit={{urlquery $.SourceCommit}}&target_commit={{urlquery $.TargetCommit}}&mode={{urlquery $.DiffMode}}&file={{urlquery .Path}}" 
                                     class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300">
                                         View
                                     </a>
@@ -126,7 +126,7 @@
                             {{end}}
                         </ul>
                     {{else}}
-                        <p class="text-gray-500 py-4">No files have changed between these branches.</p>
+                        <p class="text-gray-500 py-4">No files have changed{{if eq .DiffMode "staged"}} in staged changes{{else if eq .DiffMode "unstaged"}} in working tree{{else}} between these refs{{end}}.</p>
                     {{end}}
                 </div>
             {{end}}
@@ -141,13 +141,13 @@
                     {{if gt $index 0}}
                         {{$prevIndex := sub $index 1}}
                         {{$prevFile := index $.Files $prevIndex}}
-                        <a id="prev-file-link" href="/diff?repo={{$.RepoPath}}&source={{$.SourceBranch}}&target={{$.TargetBranch}}&source_commit={{$.SourceCommit}}&target_commit={{$.TargetCommit}}&file={{$prevFile.Path}}"></a>
+                        <a id="prev-file-link" href="/diff?repo={{urlquery $.RepoPath}}&source={{urlquery $.SourceBranch}}&target={{urlquery $.TargetBranch}}&source_commit={{urlquery $.SourceCommit}}&target_commit={{urlquery $.TargetCommit}}&mode={{urlquery $.DiffMode}}&file={{urlquery $prevFile.Path}}"></a>
                     {{end}}
                     
                     {{if lt $index (sub (len $.Files) 1)}}
                         {{$nextIndex := add $index 1}}
                         {{$nextFile := index $.Files $nextIndex}}
-                        <a id="next-file-link" href="/diff?repo={{$.RepoPath}}&source={{$.SourceBranch}}&target={{$.TargetBranch}}&source_commit={{$.SourceCommit}}&target_commit={{$.TargetCommit}}&file={{$nextFile.Path}}"></a>
+                        <a id="next-file-link" href="/diff?repo={{urlquery $.RepoPath}}&source={{urlquery $.SourceBranch}}&target={{urlquery $.TargetBranch}}&source_commit={{urlquery $.SourceCommit}}&target_commit={{urlquery $.TargetCommit}}&mode={{urlquery $.DiffMode}}&file={{urlquery $nextFile.Path}}"></a>
                     {{end}}
                 {{end}}
             {{end}}
@@ -371,4 +371,4 @@
         }
     }
 </script>
-{{end}} 
+{{end}}

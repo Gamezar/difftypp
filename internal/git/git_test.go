@@ -52,6 +52,13 @@ func setupTestRepo(t *testing.T) string {
 		t.Fatalf("Failed to commit test file: %v", err)
 	}
 
+	// Ensure the default branch is named "main" regardless of git config
+	cmd = exec.Command("git", "-C", tempDir, "branch", "-M", "main")
+	if err := cmd.Run(); err != nil {
+		os.RemoveAll(tempDir)
+		t.Fatalf("Failed to rename branch to main: %v", err)
+	}
+
 	// Create a feature branch
 	cmd = exec.Command("git", "-C", tempDir, "checkout", "-b", "feature")
 	if err := cmd.Run(); err != nil {
@@ -332,4 +339,217 @@ func isHexString(s string) bool {
 		}
 	}
 	return true
+}
+
+func TestGetStagedDiff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	repoDir := setupTestRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	t.Run("no staged changes", func(t *testing.T) {
+		diff, err := repo.GetStagedDiff()
+		if err != nil {
+			t.Fatalf("GetStagedDiff failed: %v", err)
+		}
+		if diff != "" {
+			t.Errorf("Expected empty diff with no staged changes, got: %s", diff)
+		}
+	})
+
+	t.Run("with staged changes", func(t *testing.T) {
+		// Modify a file and stage it
+		testFilePath := filepath.Join(repoDir, "test.txt")
+		if err := os.WriteFile(testFilePath, []byte("initial content\nstaged change"), 0644); err != nil {
+			t.Fatalf("Failed to modify test file: %v", err)
+		}
+
+		cmd := exec.Command("git", "-C", repoDir, "add", "test.txt")
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("Failed to stage file: %v", err)
+		}
+
+		diff, err := repo.GetStagedDiff()
+		if err != nil {
+			t.Fatalf("GetStagedDiff failed: %v", err)
+		}
+
+		if !strings.Contains(diff, "+staged change") {
+			t.Errorf("Expected staged diff to contain '+staged change', got: %s", diff)
+		}
+	})
+}
+
+func TestGetStagedFileDiff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	repoDir := setupTestRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	// Modify and stage a file
+	testFilePath := filepath.Join(repoDir, "test.txt")
+	if err := os.WriteFile(testFilePath, []byte("initial content\nstaged line"), 0644); err != nil {
+		t.Fatalf("Failed to modify test file: %v", err)
+	}
+
+	cmd := exec.Command("git", "-C", repoDir, "add", "test.txt")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to stage file: %v", err)
+	}
+
+	t.Run("existing file", func(t *testing.T) {
+		diff, err := repo.GetStagedFileDiff("test.txt")
+		if err != nil {
+			t.Fatalf("GetStagedFileDiff failed: %v", err)
+		}
+		if !strings.Contains(diff, "+staged line") {
+			t.Errorf("Expected staged file diff to contain '+staged line', got: %s", diff)
+		}
+	})
+
+	t.Run("non-staged file", func(t *testing.T) {
+		diff, err := repo.GetStagedFileDiff("nonexistent.txt")
+		if err != nil {
+			t.Fatalf("GetStagedFileDiff for non-existent file failed: %v", err)
+		}
+		if diff != "" {
+			t.Errorf("Expected empty diff for non-staged file, got: %s", diff)
+		}
+	})
+}
+
+func TestGetUnstagedDiff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	repoDir := setupTestRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	t.Run("no unstaged changes", func(t *testing.T) {
+		diff, err := repo.GetUnstagedDiff()
+		if err != nil {
+			t.Fatalf("GetUnstagedDiff failed: %v", err)
+		}
+		if diff != "" {
+			t.Errorf("Expected empty diff with no unstaged changes, got: %s", diff)
+		}
+	})
+
+	t.Run("with unstaged changes", func(t *testing.T) {
+		testFilePath := filepath.Join(repoDir, "test.txt")
+		if err := os.WriteFile(testFilePath, []byte("initial content\nunstaged change"), 0644); err != nil {
+			t.Fatalf("Failed to modify test file: %v", err)
+		}
+
+		diff, err := repo.GetUnstagedDiff()
+		if err != nil {
+			t.Fatalf("GetUnstagedDiff failed: %v", err)
+		}
+
+		if !strings.Contains(diff, "+unstaged change") {
+			t.Errorf("Expected unstaged diff to contain '+unstaged change', got: %s", diff)
+		}
+	})
+}
+
+func TestGetUnstagedFileDiff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	repoDir := setupTestRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	// Modify file without staging
+	testFilePath := filepath.Join(repoDir, "test.txt")
+	if err := os.WriteFile(testFilePath, []byte("initial content\nunstaged line"), 0644); err != nil {
+		t.Fatalf("Failed to modify test file: %v", err)
+	}
+
+	t.Run("modified file", func(t *testing.T) {
+		diff, err := repo.GetUnstagedFileDiff("test.txt")
+		if err != nil {
+			t.Fatalf("GetUnstagedFileDiff failed: %v", err)
+		}
+		if !strings.Contains(diff, "+unstaged line") {
+			t.Errorf("Expected unstaged file diff to contain '+unstaged line', got: %s", diff)
+		}
+	})
+
+	t.Run("unmodified file", func(t *testing.T) {
+		diff, err := repo.GetUnstagedFileDiff("nonexistent.txt")
+		if err != nil {
+			t.Fatalf("GetUnstagedFileDiff for non-existent file failed: %v", err)
+		}
+		if diff != "" {
+			t.Errorf("Expected empty diff for unmodified file, got: %s", diff)
+		}
+	})
+}
+
+func TestGetRecentCommits(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	repoDir := setupTestRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	// We're on main branch which has 1 commit ("Initial commit")
+	commits, err := repo.GetRecentCommits(10)
+	if err != nil {
+		t.Fatalf("GetRecentCommits failed: %v", err)
+	}
+
+	if len(commits) != 1 {
+		t.Errorf("Expected 1 commit on main, got %d", len(commits))
+	}
+
+	if len(commits) > 0 {
+		if len(commits[0].Hash) != 40 || !isHexString(commits[0].Hash) {
+			t.Errorf("Invalid commit hash: %s", commits[0].Hash)
+		}
+		if commits[0].Subject != "Initial commit" {
+			t.Errorf("Expected subject 'Initial commit', got '%s'", commits[0].Subject)
+		}
+	}
+
+	// Switch to feature branch which has 2 commits
+	cmd := exec.Command("git", "-C", repoDir, "checkout", "feature")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to switch to feature branch: %v", err)
+	}
+
+	commits, err = repo.GetRecentCommits(10)
+	if err != nil {
+		t.Fatalf("GetRecentCommits on feature failed: %v", err)
+	}
+
+	if len(commits) != 2 {
+		t.Errorf("Expected 2 commits on feature, got %d", len(commits))
+	}
+
+	if len(commits) >= 2 {
+		if commits[0].Subject != "Add new line" {
+			t.Errorf("Expected first commit subject 'Add new line', got '%s'", commits[0].Subject)
+		}
+		if commits[1].Subject != "Initial commit" {
+			t.Errorf("Expected second commit subject 'Initial commit', got '%s'", commits[1].Subject)
+		}
+	}
 }

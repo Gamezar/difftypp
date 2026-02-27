@@ -14,6 +14,7 @@ type ReviewState struct {
 	TargetBranch  string       `json:"target_branch"`
 	SourceCommit  string       `json:"source_commit"`
 	TargetCommit  string       `json:"target_commit"`
+	DiffMode      string       `json:"diff_mode,omitempty"`
 }
 
 // LineState constants
@@ -21,6 +22,14 @@ const (
 	StateApproved = "approved"
 	StateRejected = "rejected"
 	StateSkipped  = "skipped"
+)
+
+// DiffMode constants define the type of diff comparison
+const (
+	ModeBranches = "branches"
+	ModeCommits  = "commits"
+	ModeStaged   = "staged"
+	ModeUnstaged = "unstaged"
 )
 
 // DiffFile represents a file diff

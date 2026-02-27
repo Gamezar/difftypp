@@ -46,6 +46,12 @@ func New(storage storage.Storage) (*Server, error) {
 		"sub":       func(a, b int) int { return a - b },
 		"index":     func(arr []map[string]string, i int) map[string]string { return arr[i] },
 		"len":       func(arr []map[string]string) int { return len(arr) },
+		"shortHash": func(hash string) string {
+			if len(hash) > 8 {
+				return hash[:8]
+			}
+			return hash
+		},
 	}
 
 	// Parse all templates with the function map
@@ -176,11 +182,24 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "index.html", data)
 }
 
+// getDiffMode reads and validates the mode query parameter, defaulting to branches
+func getDiffMode(r *http.Request) string {
+	mode := r.URL.Query().Get("mode")
+	switch mode {
+	case models.ModeCommits, models.ModeStaged, models.ModeUnstaged:
+		return mode
+	default:
+		return models.ModeBranches
+	}
+}
+
 // handleCompare renders the comparison page
 func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 	repoPath := r.URL.Query().Get("repo")
 	sourceBranch := r.URL.Query().Get("source")
 	targetBranch := r.URL.Query().Get("target")
+	mode := getDiffMode(r)
+
 	// Handle form submission
 	if r.Method == http.MethodPost {
 		// Parse form data
@@ -193,6 +212,15 @@ func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 		formRepoPath := r.FormValue("repo")
 		formSourceBranch := r.FormValue("source")
 		formTargetBranch := r.FormValue("target")
+		if formMode := r.FormValue("mode"); formMode != "" {
+			// Validate formMode the same way getDiffMode() does
+			switch formMode {
+			case models.ModeCommits, models.ModeStaged, models.ModeUnstaged, models.ModeBranches:
+				mode = formMode
+			default:
+				mode = models.ModeBranches
+			}
+		}
 
 		if formRepoPath != "" {
 			repoPath = formRepoPath
@@ -204,6 +232,64 @@ func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Staged and unstaged modes don't need source/target branches — redirect directly to diff view
+		if mode == models.ModeStaged || mode == models.ModeUnstaged {
+			redirectURL := fmt.Sprintf("/diff?repo=%s&mode=%s",
+				url.QueryEscape(repoPath),
+				url.QueryEscape(mode))
+			http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+			return
+		}
+
+		// For commits mode, source and target are arbitrary refs (SHAs, tags, HEAD~N, etc.)
+		if mode == models.ModeCommits {
+			if formSourceBranch != "" {
+				sourceBranch = formSourceBranch
+			}
+			if formTargetBranch != "" {
+				targetBranch = formTargetBranch
+			}
+			if sourceBranch == "" || targetBranch == "" {
+				s.renderError(w, "Missing Refs", "Source and target refs are required for commit comparison", http.StatusBadRequest)
+				return
+			}
+
+			// Check if the repository exists
+			repo, exists, err := s.GetRepository(repoPath)
+			if err != nil {
+				s.renderError(w, "Repository Error", fmt.Sprintf("Error loading repository: %v", err), http.StatusInternalServerError)
+				return
+			}
+			if !exists {
+				s.renderError(w, "Not Found", "Repository not found", http.StatusNotFound)
+				return
+			}
+
+			// Resolve refs to commit hashes
+			sourceCommit, err := repo.GetBranchCommitHash(sourceBranch)
+			if err != nil {
+				s.renderError(w, "Ref Error", fmt.Sprintf("Failed to resolve source ref '%s': %v", sourceBranch, err), http.StatusInternalServerError)
+				return
+			}
+			targetCommit, err := repo.GetBranchCommitHash(targetBranch)
+			if err != nil {
+				s.renderError(w, "Ref Error", fmt.Sprintf("Failed to resolve target ref '%s': %v", targetBranch, err), http.StatusInternalServerError)
+				return
+			}
+
+			redirectURL := fmt.Sprintf("/diff?repo=%s&source=%s&target=%s&source_commit=%s&target_commit=%s&mode=%s",
+				url.QueryEscape(repoPath),
+				url.QueryEscape(sourceBranch),
+				url.QueryEscape(targetBranch),
+				url.QueryEscape(sourceCommit),
+				url.QueryEscape(targetCommit),
+				url.QueryEscape(mode))
+
+			http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+			return
+		}
+
+		// Branches mode (default)
 		// Only update if non-empty values provided
 		if formSourceBranch != "" {
 			sourceBranch = formSourceBranch
@@ -244,12 +330,13 @@ func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Redirect to diff view with commit hashes
-		redirectURL := fmt.Sprintf("/diff?repo=%s&source=%s&target=%s&source_commit=%s&target_commit=%s",
+		redirectURL := fmt.Sprintf("/diff?repo=%s&source=%s&target=%s&source_commit=%s&target_commit=%s&mode=%s",
 			url.QueryEscape(repoPath),
 			url.QueryEscape(sourceBranch),
 			url.QueryEscape(targetBranch),
 			url.QueryEscape(sourceCommit),
-			url.QueryEscape(targetCommit))
+			url.QueryEscape(targetCommit),
+			url.QueryEscape(mode))
 
 		http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 		return
@@ -303,6 +390,17 @@ func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 		"SourceBranch": sourceBranch,
 		"TargetBranch": targetBranch,
 		"Branches":     branches,
+		"DiffMode":     mode,
+	}
+
+	// For commits mode, load recent commits for the UI
+	if mode == models.ModeCommits {
+		commits, err := repo.GetRecentCommits(20)
+		if err != nil {
+			// Non-fatal: just show empty list
+			commits = []git.Commit{}
+		}
+		data["RecentCommits"] = commits
 	}
 
 	s.render(w, "compare.html", data)
@@ -358,10 +456,19 @@ func (s *Server) handleReviewState(w http.ResponseWriter, r *http.Request) {
 	filePath := r.URL.Query().Get("file")
 	status := r.URL.Query().Get("status")
 	nextFilePath := r.URL.Query().Get("next")
+	mode := getDiffMode(r)
 
-	if repoPath == "" || sourceBranch == "" || targetBranch == "" || sourceCommit == "" || targetCommit == "" || filePath == "" || status == "" {
-		s.renderError(w, "Missing Parameters", "Missing required parameters for updating review state", http.StatusBadRequest)
-		return
+	// For staged/unstaged modes, source/target branches are not required
+	if mode == models.ModeStaged || mode == models.ModeUnstaged {
+		if repoPath == "" || sourceCommit == "" || targetCommit == "" || filePath == "" || status == "" {
+			s.renderError(w, "Missing Parameters", "Missing required parameters for updating review state", http.StatusBadRequest)
+			return
+		}
+	} else {
+		if repoPath == "" || sourceBranch == "" || targetBranch == "" || sourceCommit == "" || targetCommit == "" || filePath == "" || status == "" {
+			s.renderError(w, "Missing Parameters", "Missing required parameters for updating review state", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Validate status value
@@ -376,6 +483,9 @@ func (s *Server) handleReviewState(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, "Review State Error", fmt.Sprintf("Failed to load review state: %v", err), http.StatusInternalServerError)
 		return
 	}
+
+	// Set diff mode on the state
+	existingState.DiffMode = mode
 
 	// Look for the file in the existing review state
 	fileFound := false
@@ -407,12 +517,13 @@ func (s *Server) handleReviewState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Determine where to redirect
-	redirectPath := fmt.Sprintf("/diff?repo=%s&source=%s&target=%s&source_commit=%s&target_commit=%s",
+	redirectPath := fmt.Sprintf("/diff?repo=%s&source=%s&target=%s&source_commit=%s&target_commit=%s&mode=%s",
 		url.QueryEscape(repoPath),
 		url.QueryEscape(sourceBranch),
 		url.QueryEscape(targetBranch),
 		url.QueryEscape(sourceCommit),
-		url.QueryEscape(targetCommit))
+		url.QueryEscape(targetCommit),
+		url.QueryEscape(mode))
 
 	// If next file specified and this was approved, rejected, or skipped, go to next file
 	if nextFilePath != "" && (status == models.StateApproved || status == models.StateRejected || status == models.StateSkipped) {
@@ -432,10 +543,18 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 	sourceBranch := r.URL.Query().Get("source")
 	targetBranch := r.URL.Query().Get("target")
 	filePath := r.URL.Query().Get("file")
+	mode := getDiffMode(r)
 
-	if repoPath == "" || sourceBranch == "" || targetBranch == "" {
+	// Validate required params based on mode
+	if repoPath == "" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
+	}
+	if mode == models.ModeBranches || mode == models.ModeCommits {
+		if sourceBranch == "" || targetBranch == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
 	}
 
 	// Check if the repository exists
@@ -452,17 +571,66 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 	// Get repository name from path for display
 	repoName := filepath.Base(repoPath)
 
-	// Get commit hashes for the branches
-	sourceCommit, err := repo.GetBranchCommitHash(sourceBranch)
-	if err != nil {
-		s.renderError(w, "Branch Error", fmt.Sprintf("Failed to get commit hash for source branch: %v", err), http.StatusInternalServerError)
-		return
-	}
+	// Compute source/target commits and display labels based on mode
+	var sourceCommit, targetCommit string
+	var sourceLabel, targetLabel string
 
-	targetCommit, err := repo.GetBranchCommitHash(targetBranch)
-	if err != nil {
-		s.renderError(w, "Branch Error", fmt.Sprintf("Failed to get commit hash for target branch: %v", err), http.StatusInternalServerError)
-		return
+	switch mode {
+	case models.ModeStaged:
+		headHash, err := repo.GetBranchCommitHash("HEAD")
+		if err != nil {
+			s.renderError(w, "Git Error", fmt.Sprintf("Failed to resolve HEAD: %v", err), http.StatusInternalServerError)
+			return
+		}
+		sourceCommit = headHash
+		targetCommit = "staged-" + headHash
+		sourceBranch = "HEAD"
+		targetBranch = "staged"
+		sourceLabel = "HEAD"
+		targetLabel = "Staged Changes"
+
+	case models.ModeUnstaged:
+		headHash, err := repo.GetBranchCommitHash("HEAD")
+		if err != nil {
+			s.renderError(w, "Git Error", fmt.Sprintf("Failed to resolve HEAD: %v", err), http.StatusInternalServerError)
+			return
+		}
+		sourceCommit = headHash
+		targetCommit = "unstaged-" + headHash
+		sourceBranch = "HEAD"
+		targetBranch = "unstaged"
+		sourceLabel = "HEAD"
+		targetLabel = "Working Tree"
+
+	case models.ModeCommits:
+		var err error
+		sourceCommit, err = repo.GetBranchCommitHash(sourceBranch)
+		if err != nil {
+			s.renderError(w, "Ref Error", fmt.Sprintf("Failed to resolve source ref: %v", err), http.StatusInternalServerError)
+			return
+		}
+		targetCommit, err = repo.GetBranchCommitHash(targetBranch)
+		if err != nil {
+			s.renderError(w, "Ref Error", fmt.Sprintf("Failed to resolve target ref: %v", err), http.StatusInternalServerError)
+			return
+		}
+		sourceLabel = sourceBranch
+		targetLabel = targetBranch
+
+	default: // branches
+		var err error
+		sourceCommit, err = repo.GetBranchCommitHash(sourceBranch)
+		if err != nil {
+			s.renderError(w, "Branch Error", fmt.Sprintf("Failed to get commit hash for source branch: %v", err), http.StatusInternalServerError)
+			return
+		}
+		targetCommit, err = repo.GetBranchCommitHash(targetBranch)
+		if err != nil {
+			s.renderError(w, "Branch Error", fmt.Sprintf("Failed to get commit hash for target branch: %v", err), http.StatusInternalServerError)
+			return
+		}
+		sourceLabel = sourceBranch
+		targetLabel = targetBranch
 	}
 
 	// Load review state
@@ -475,6 +643,7 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 			TargetBranch:  targetBranch,
 			SourceCommit:  sourceCommit,
 			TargetCommit:  targetCommit,
+			DiffMode:      mode,
 		}
 	}
 
@@ -486,18 +655,28 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 		"TargetBranch": targetBranch,
 		"SourceCommit": sourceCommit,
 		"TargetCommit": targetCommit,
+		"SourceLabel":  sourceLabel,
+		"TargetLabel":  targetLabel,
+		"DiffMode":     mode,
 		"Error":        "",
 		"NoDiff":       false,
 		"ReviewState":  reviewState,
 	}
 
-	// Get the diff
-	var diffText string
-	var err2 error
+	// Get the diff based on mode
+	var fullDiffText string
+	var fullDiffErr error
 	var files []map[string]string
 
-	// Always get full diff to extract file list (needed for navigation)
-	fullDiffText, fullDiffErr := repo.GetDiff(sourceBranch, targetBranch)
+	switch mode {
+	case models.ModeStaged:
+		fullDiffText, fullDiffErr = repo.GetStagedDiff()
+	case models.ModeUnstaged:
+		fullDiffText, fullDiffErr = repo.GetUnstagedDiff()
+	default: // branches and commits both use GetDiff with refs
+		fullDiffText, fullDiffErr = repo.GetDiff(sourceBranch, targetBranch)
+	}
+
 	if fullDiffErr != nil {
 		data["Error"] = fmt.Sprintf("Failed to load diff: %v", fullDiffErr)
 	} else if fullDiffText == "" {
@@ -513,8 +692,19 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If a specific file is requested, load its diff
-	diffText, err2 = repo.GetFileDiff(sourceBranch, targetBranch, filePath)
+	// If a specific file is requested, load its diff based on mode
+	var diffText string
+	var err2 error
+
+	switch mode {
+	case models.ModeStaged:
+		diffText, err2 = repo.GetStagedFileDiff(filePath)
+	case models.ModeUnstaged:
+		diffText, err2 = repo.GetUnstagedFileDiff(filePath)
+	default: // branches and commits
+		diffText, err2 = repo.GetFileDiff(sourceBranch, targetBranch, filePath)
+	}
+
 	if err2 != nil {
 		data["Error"] = fmt.Sprintf("Failed to load diff: %v", err2)
 	} else {

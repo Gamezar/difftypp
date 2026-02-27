@@ -1,16 +1,45 @@
 {{define "compare.html"}}
 <div class="max-w-3xl mx-auto">
     <div class="flex items-center gap-2 mb-6">
-        <a href="/" class="text-blue-600 hover:underline">← Back to Repositories</a>
+        <a href="/" class="text-blue-600 hover:underline">&larr; Back to Repositories</a>
         <span class="text-gray-500">/</span>
         <h2 class="text-xl font-bold">{{.RepoName}}</h2>
     </div>
     
+    <!-- Mode Tabs -->
+    <div class="border-b border-gray-200 mb-6">
+        <nav class="-mb-px flex space-x-8" aria-label="Diff mode tabs">
+            <a href="/compare?repo={{urlquery .RepoPath}}&mode=branches"
+               class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm
+                      {{if eq .DiffMode "branches"}}border-blue-500 text-blue-600{{else}}border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300{{end}}">
+                Branches
+            </a>
+            <a href="/compare?repo={{urlquery .RepoPath}}&mode=commits"
+               class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm
+                      {{if eq .DiffMode "commits"}}border-blue-500 text-blue-600{{else}}border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300{{end}}">
+                Commits
+            </a>
+            <a href="/compare?repo={{urlquery .RepoPath}}&mode=staged"
+               class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm
+                      {{if eq .DiffMode "staged"}}border-blue-500 text-blue-600{{else}}border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300{{end}}">
+                Staged
+            </a>
+            <a href="/compare?repo={{urlquery .RepoPath}}&mode=unstaged"
+               class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm
+                      {{if eq .DiffMode "unstaged"}}border-blue-500 text-blue-600{{else}}border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300{{end}}">
+                Unstaged
+            </a>
+        </nav>
+    </div>
+
+    {{if eq .DiffMode "branches"}}
+    <!-- Branches Mode -->
     <div class="bg-white shadow rounded-lg p-6 mb-8">
         <h3 class="font-semibold mb-6">Compare Branches</h3>
         
         <form id="compare-form" action="/compare" method="POST" class="space-y-6">
             <input type="hidden" name="repo" value="{{.RepoPath}}">
+            <input type="hidden" name="mode" value="branches">
             
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -38,13 +67,83 @@
                     Compare Branches
                 </button>
             </div>
-            
-            <div class="text-xs text-gray-500 mt-4 hidden">
-                Repository: {{.RepoPath}}<br>
-                Source Branch: {{.SourceBranch}}<br>
-                Target Branch: {{.TargetBranch}}
-            </div>
         </form>
     </div>
+
+    {{else if eq .DiffMode "commits"}}
+    <!-- Commits Mode -->
+    <div class="bg-white shadow rounded-lg p-6 mb-8">
+        <h3 class="font-semibold mb-6">Compare Commits</h3>
+        
+        <form id="compare-form" action="/compare" method="POST" class="space-y-6">
+            <input type="hidden" name="repo" value="{{.RepoPath}}">
+            <input type="hidden" name="mode" value="commits">
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label for="target" class="block text-sm font-medium text-gray-700 mb-1">Base Ref (Target)</label>
+                    <input type="text" id="target" name="target" value="{{.TargetBranch}}"
+                           placeholder="e.g. main, HEAD~3, abc1234"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <p class="mt-1 text-xs text-gray-500">SHA, tag, branch name, or HEAD~N</p>
+                </div>
+                <div>
+                    <label for="source" class="block text-sm font-medium text-gray-700 mb-1">Compare Ref (Source)</label>
+                    <input type="text" id="source" name="source" value="{{.SourceBranch}}"
+                           placeholder="e.g. HEAD, feature-branch, def5678"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <p class="mt-1 text-xs text-gray-500">SHA, tag, branch name, or HEAD~N</p>
+                </div>
+            </div>
+            
+            <div class="flex justify-end">
+                <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                    Compare Commits
+                </button>
+            </div>
+        </form>
+        
+        {{if .RecentCommits}}
+        <div class="mt-6 border-t pt-4">
+            <h4 class="text-sm font-medium text-gray-700 mb-3">Recent Commits</h4>
+            <ul class="space-y-1 max-h-64 overflow-y-auto">
+                {{range .RecentCommits}}
+                <li class="flex items-start gap-2 py-1 text-sm">
+                    <code class="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono text-gray-600 shrink-0 cursor-pointer select-all" title="Click to select">{{shortHash .Hash}}</code>
+                    <span class="text-gray-700 truncate">{{.Subject}}</span>
+                </li>
+                {{end}}
+            </ul>
+        </div>
+        {{end}}
+    </div>
+
+    {{else if eq .DiffMode "staged"}}
+    <!-- Staged Mode -->
+    <div class="bg-white shadow rounded-lg p-6 mb-8">
+        <h3 class="font-semibold mb-4">Staged Changes</h3>
+        <p class="text-gray-600 mb-6">Review files that have been added to the Git staging area (<code class="text-sm bg-gray-100 px-1.5 py-0.5 rounded">git add</code>).</p>
+        <div class="flex justify-end">
+            <a href="/diff?repo={{urlquery .RepoPath}}&mode=staged"
+               class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 inline-block">
+                View Staged Changes
+            </a>
+        </div>
+    </div>
+
+    {{else if eq .DiffMode "unstaged"}}
+    <!-- Unstaged Mode -->
+    <div class="bg-white shadow rounded-lg p-6 mb-8">
+        <h3 class="font-semibold mb-4">Unstaged Changes</h3>
+        <p class="text-gray-600 mb-6">Review working tree modifications that have not yet been staged (<code class="text-sm bg-gray-100 px-1.5 py-0.5 rounded">git diff</code>).</p>
+        <div class="flex justify-end">
+            <a href="/diff?repo={{urlquery .RepoPath}}&mode=unstaged"
+               class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 inline-block">
+                View Unstaged Changes
+            </a>
+        </div>
+    </div>
+
+    {{end}}
 </div>
-{{end}} 
+{{end}}
