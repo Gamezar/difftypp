@@ -74,7 +74,7 @@
   "mcp": {
     "serena": {
       "type": "local",
-      "command": ["uvx", "--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project", "/home/george/diffty", "--open-web-dashboard", "False"],
+      "command": ["uvx", "--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project", "/home/george/diffty", "--context", "ide", "--open-web-dashboard", "False"],
       "enabled": true
     },
     "ado": {
