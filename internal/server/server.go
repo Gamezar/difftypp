@@ -174,10 +174,9 @@ func (s *Server) GetRepositories() (map[string]*git.Repository, error) {
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
 
-	// Static files
-	//staticDir := filepath.Join("internal", "server", "static")
+	// Static files — wrap with MIME type fixer for embedded assets
 	fileServer := http.FileServer(http.FS(staticDir))
-	mux.Handle("GET /static/", http.StripPrefix("/static/", fileServer))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", mimeFixHandler(fileServer)))
 
 	// API routes
 	mux.HandleFunc("POST /api/repository/add", s.handleAddRepository)
@@ -195,6 +194,22 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("GET /", s.handleIndex)
 
 	return mux
+}
+
+// mimeFixHandler wraps an http.Handler to fix Content-Type for embedded static
+// assets. Go's embed.FS + http.FileServer may serve .css files as text/plain
+// because the embedded content lacks OS-level MIME detection.
+func mimeFixHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ext := filepath.Ext(r.URL.Path)
+		switch ext {
+		case ".css":
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		case ".js":
+			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handleIndex renders the index page
