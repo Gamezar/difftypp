@@ -14,6 +14,8 @@ import (
 type Storage interface {
 	SaveReviewState(state *models.ReviewState, repoPath string) error
 	LoadReviewState(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit string) (*models.ReviewState, error)
+	SaveReview(review *models.Review, repoPath string) error
+	LoadReview(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit string) (*models.Review, error)
 	SaveRepositories(repos []string) error
 	LoadRepositories() ([]string, error)
 }
@@ -43,22 +45,56 @@ func NewJSONStorage() (*JSONStorage, error) {
 	}, nil
 }
 
-// getReviewStatePath returns the path to the review state file
-func (s *JSONStorage) getReviewStatePath(repoPath, sourceCommit, targetCommit string) string {
-	// Create a safe repository path by replacing special characters
-	safeRepoPath := strings.ReplaceAll(repoPath, string(os.PathSeparator), "_")
-	safeRepoPath = strings.ReplaceAll(safeRepoPath, ":", "_")
+// sanitizeRepoPath replaces special characters in a repo path to make it safe for use as a directory name
+func sanitizeRepoPath(repoPath string) string {
+	safe := strings.ReplaceAll(repoPath, string(os.PathSeparator), "_")
+	safe = strings.ReplaceAll(safe, ":", "_")
+	return safe
+}
 
-	// Create directory structure: .diffty/repository/first-branch-commit-hash/second-branch-commit-hash
-	reviewDir := filepath.Join(s.baseStoragePath, safeRepoPath, sourceCommit, targetCommit)
+// reviewStatePath returns the file path for a review state (pure computation, no side effects)
+func (s *JSONStorage) reviewStatePath(repoPath, sourceCommit, targetCommit string) string {
+	safeRepoPath := sanitizeRepoPath(repoPath)
+	return filepath.Join(s.baseStoragePath, safeRepoPath, sourceCommit, targetCommit, "review-state.json")
+}
 
-	// Ensure the directory exists
-	if err := os.MkdirAll(reviewDir, 0755); err != nil {
-		// Just log error, don't fail
-		fmt.Printf("Warning: failed to create review directory: %v\n", err)
+// reviewPath returns the file path for a review (pure computation, no side effects)
+func (s *JSONStorage) reviewPath(repoPath, sourceCommit, targetCommit string) string {
+	safeRepoPath := sanitizeRepoPath(repoPath)
+	return filepath.Join(s.baseStoragePath, "reviews", safeRepoPath, sourceCommit, targetCommit, "review.json")
+}
+
+// ensureDir creates the parent directory of the given file path if it doesn't exist
+func ensureDir(filePath string) error {
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
+	return nil
+}
 
-	return filepath.Join(reviewDir, "review-state.json")
+// newEmptyReviewState creates an empty ReviewState with the given parameters
+func newEmptyReviewState(sourceBranch, targetBranch, sourceCommit, targetCommit string) *models.ReviewState {
+	return &models.ReviewState{
+		ReviewedFiles: []models.FileReview{},
+		SourceBranch:  sourceBranch,
+		TargetBranch:  targetBranch,
+		SourceCommit:  sourceCommit,
+		TargetCommit:  targetCommit,
+	}
+}
+
+// newEmptyReview creates an empty Review with the given parameters
+func newEmptyReview(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit string) *models.Review {
+	return &models.Review{
+		RepoPath:     repoPath,
+		SourceBranch: sourceBranch,
+		TargetBranch: targetBranch,
+		SourceCommit: sourceCommit,
+		TargetCommit: targetCommit,
+		Comments:     []models.ReviewComment{},
+		Status:       models.ReviewStatusDraft,
+	}
 }
 
 // SaveReviewState saves the review state to a JSON file
@@ -67,7 +103,11 @@ func (s *JSONStorage) SaveReviewState(state *models.ReviewState, repoPath string
 		return fmt.Errorf("source and target commit hashes are required")
 	}
 
-	storagePath := s.getReviewStatePath(repoPath, state.SourceCommit, state.TargetCommit)
+	storagePath := s.reviewStatePath(repoPath, state.SourceCommit, state.TargetCommit)
+
+	if err := ensureDir(storagePath); err != nil {
+		return fmt.Errorf("failed to prepare review state directory: %w", err)
+	}
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -84,27 +124,13 @@ func (s *JSONStorage) SaveReviewState(state *models.ReviewState, repoPath string
 // LoadReviewState loads the review state from a JSON file
 func (s *JSONStorage) LoadReviewState(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit string) (*models.ReviewState, error) {
 	if sourceCommit == "" || targetCommit == "" {
-		return &models.ReviewState{
-			ReviewedFiles: []models.FileReview{},
-			SourceBranch:  sourceBranch,
-			TargetBranch:  targetBranch,
-			SourceCommit:  sourceCommit,
-			TargetCommit:  targetCommit,
-		}, nil
+		return newEmptyReviewState(sourceBranch, targetBranch, sourceCommit, targetCommit), nil
 	}
 
-	storagePath := s.getReviewStatePath(repoPath, sourceCommit, targetCommit)
+	storagePath := s.reviewStatePath(repoPath, sourceCommit, targetCommit)
 
-	// Check if the file exists
 	if _, err := os.Stat(storagePath); os.IsNotExist(err) {
-		// Return empty state if file doesn't exist
-		return &models.ReviewState{
-			ReviewedFiles: []models.FileReview{},
-			SourceBranch:  sourceBranch,
-			TargetBranch:  targetBranch,
-			SourceCommit:  sourceCommit,
-			TargetCommit:  targetCommit,
-		}, nil
+		return newEmptyReviewState(sourceBranch, targetBranch, sourceCommit, targetCommit), nil
 	}
 
 	data, err := os.ReadFile(storagePath)
@@ -136,9 +162,7 @@ func (s *JSONStorage) SaveRepositories(repos []string) error {
 
 // LoadRepositories loads the repository paths from a JSON file
 func (s *JSONStorage) LoadRepositories() ([]string, error) {
-	// Check if the file exists
 	if _, err := os.Stat(s.reposPath); os.IsNotExist(err) {
-		// Return empty slice if file doesn't exist
 		return []string{}, nil
 	}
 
@@ -153,4 +177,53 @@ func (s *JSONStorage) LoadRepositories() ([]string, error) {
 	}
 
 	return repos, nil
+}
+
+// SaveReview saves a review with inline comments to a JSON file
+func (s *JSONStorage) SaveReview(review *models.Review, repoPath string) error {
+	if review.SourceCommit == "" || review.TargetCommit == "" {
+		return fmt.Errorf("source and target commit hashes are required")
+	}
+
+	storagePath := s.reviewPath(repoPath, review.SourceCommit, review.TargetCommit)
+
+	if err := ensureDir(storagePath); err != nil {
+		return fmt.Errorf("failed to prepare review directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(review, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal review: %w", err)
+	}
+
+	if err := os.WriteFile(storagePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write review: %w", err)
+	}
+
+	return nil
+}
+
+// LoadReview loads a review with inline comments from a JSON file
+func (s *JSONStorage) LoadReview(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit string) (*models.Review, error) {
+	if sourceCommit == "" || targetCommit == "" {
+		return newEmptyReview(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit), nil
+	}
+
+	storagePath := s.reviewPath(repoPath, sourceCommit, targetCommit)
+
+	if _, err := os.Stat(storagePath); os.IsNotExist(err) {
+		return newEmptyReview(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit), nil
+	}
+
+	data, err := os.ReadFile(storagePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read review: %w", err)
+	}
+
+	var review models.Review
+	if err := json.Unmarshal(data, &review); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal review: %w", err)
+	}
+
+	return &review, nil
 }

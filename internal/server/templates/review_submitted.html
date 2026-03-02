@@ -1,0 +1,73 @@
+{{define "review_submitted.html"}}
+<div class="max-w-4xl mx-auto">
+    <div class="flex items-center gap-2 mb-6">
+        <a href="/diff?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&mode={{urlquery .DiffMode}}" class="text-blue-600 hover:underline">&larr; Back to Diff</a>
+        <span class="text-gray-500">/</span>
+        <h2 class="text-xl font-bold">{{.RepoName}}</h2>
+    </div>
+
+    <div class="bg-white shadow rounded-lg p-6 mb-6">
+        <div class="flex items-center gap-3 mb-4">
+            <svg class="h-8 w-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <h3 class="text-2xl font-bold text-green-700">Review Submitted</h3>
+        </div>
+        <p class="text-gray-600 mb-4">
+            Your review has been submitted with {{ len .Review.Comments }} comment{{ if gt (len .Review.Comments) 1 }}s{{ end }}.
+            Copy the markdown below to paste into OpenCode or your code review tool.
+        </p>
+
+        <div class="flex gap-2 mb-4">
+            <button id="copy-btn" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 font-medium">
+                Copy to Clipboard
+            </button>
+            <a href="/api/review/export?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&mode={{urlquery .DiffMode}}" 
+               class="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 font-medium" download="review.md">
+                Download .md
+            </a>
+        </div>
+
+        <div id="copy-success" class="hidden bg-green-100 border border-green-400 text-green-700 px-4 py-2 rounded mb-4">
+            Copied to clipboard!
+        </div>
+    </div>
+
+    <div class="bg-white shadow rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-4 py-3 border-b flex justify-between items-center">
+            <span class="font-medium text-gray-700">Markdown Export</span>
+            <span class="text-sm text-gray-500">{{ len .Review.Comments }} comment{{ if gt (len .Review.Comments) 1 }}s{{ end }}</span>
+        </div>
+        <pre id="markdown-content" class="p-4 text-sm font-mono whitespace-pre-wrap bg-gray-50 overflow-x-auto max-h-[80vh] overflow-y-auto">{{ .Markdown }}</pre>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var copyBtn = document.getElementById('copy-btn');
+    var markdownEl = document.getElementById('markdown-content');
+    var copySuccess = document.getElementById('copy-success');
+
+    if (copyBtn && markdownEl) {
+        copyBtn.addEventListener('click', function() {
+            var text = markdownEl.textContent;
+            navigator.clipboard.writeText(text).then(function() {
+                copySuccess.classList.remove('hidden');
+                copyBtn.textContent = 'Copied!';
+                setTimeout(function() {
+                    copySuccess.classList.add('hidden');
+                    copyBtn.textContent = 'Copy to Clipboard';
+                }, 2000);
+            }).catch(function() {
+                // Fallback: select text
+                var range = document.createRange();
+                range.selectNodeContents(markdownEl);
+                var sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            });
+        });
+    }
+});
+</script>
+{{end}}

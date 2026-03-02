@@ -2,7 +2,9 @@ package server
 
 import (
 	"bytes"
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -11,7 +13,9 @@ import (
 	"net/url"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/darccio/diffty/internal/git"
 	"github.com/darccio/diffty/internal/models"
@@ -34,7 +38,6 @@ var staticDir embed.FS
 type Server struct {
 	storage storage.Storage
 	tmpl    *template.Template
-	mux     *http.ServeMux
 }
 
 // New creates a new Server instance
@@ -44,13 +47,40 @@ func New(storage storage.Storage) (*Server, error) {
 		"hasPrefix": strings.HasPrefix, // Used to check if a string starts with a prefix
 		"add":       func(a, b int) int { return a + b },
 		"sub":       func(a, b int) int { return a - b },
-		"index":     func(arr []map[string]string, i int) map[string]string { return arr[i] },
-		"len":       func(arr []map[string]string) int { return len(arr) },
 		"shortHash": func(hash string) string {
 			if len(hash) > 8 {
 				return hash[:8]
 			}
 			return hash
+		},
+		// trimLinePrefix removes the leading +/-/space character from a diff line
+		"trimLinePrefix": func(line string) string {
+			if len(line) > 0 && (line[0] == '+' || line[0] == '-' || line[0] == ' ') {
+				return line[1:]
+			}
+			return line
+		},
+		// lineType returns "addition", "deletion", or "context" based on diff line prefix
+		"lineType": func(line string) string {
+			if strings.HasPrefix(line, "+") {
+				return "addition"
+			}
+			if strings.HasPrefix(line, "-") {
+				return "deletion"
+			}
+			return "context"
+		},
+		// commentsForLine filters review comments for a specific file and line number
+		"commentsForLine": func(comments []models.ReviewComment, filePath string, lineNum int, side string) []models.ReviewComment {
+			var result []models.ReviewComment
+			for _, c := range comments {
+				if c.FilePath == filePath && lineNum >= c.StartLine && lineNum <= c.EndLine {
+					if c.Side == side || c.Side == "both" || side == "" {
+						result = append(result, c)
+					}
+				}
+			}
+			return result
 		},
 	}
 
@@ -64,7 +94,6 @@ func New(storage storage.Storage) (*Server, error) {
 	server := &Server{
 		storage: storage,
 		tmpl:    tmpl,
-		mux:     http.NewServeMux(),
 	}
 
 	return server, nil
@@ -153,6 +182,11 @@ func (s *Server) Router() http.Handler {
 	// API routes
 	mux.HandleFunc("POST /api/repository/add", s.handleAddRepository)
 	mux.HandleFunc("POST /api/review-state", s.handleReviewState)
+	mux.HandleFunc("POST /api/review/comment", s.handleAddComment)
+	mux.HandleFunc("DELETE /api/review/comment", s.handleDeleteComment)
+	mux.HandleFunc("POST /api/review/comment/resolve", s.handleResolveComment)
+	mux.HandleFunc("POST /api/review/submit", s.handleSubmitReview)
+	mux.HandleFunc("GET /api/review/export", s.handleExportReview)
 
 	// HTML routes
 	mux.HandleFunc("GET /compare", s.handleCompare)
@@ -190,6 +224,42 @@ func getDiffMode(r *http.Request) string {
 		return mode
 	default:
 		return models.ModeBranches
+	}
+}
+
+// diffParams holds the common query parameters used across review handlers
+type diffParams struct {
+	RepoPath     string
+	SourceBranch string
+	TargetBranch string
+	SourceCommit string
+	TargetCommit string
+	Mode         string
+	FilePath     string
+}
+
+// parseDiffParams extracts the standard diff/review parameters from a request's query string
+func parseDiffParams(r *http.Request) diffParams {
+	return diffParams{
+		RepoPath:     r.URL.Query().Get("repo"),
+		SourceBranch: r.URL.Query().Get("source"),
+		TargetBranch: r.URL.Query().Get("target"),
+		SourceCommit: r.URL.Query().Get("source_commit"),
+		TargetCommit: r.URL.Query().Get("target_commit"),
+		Mode:         getDiffMode(r),
+		FilePath:     r.URL.Query().Get("file"),
+	}
+}
+
+// getDiffForMode fetches the full diff text based on the diff mode
+func getDiffForMode(repo *git.Repository, p diffParams) (string, error) {
+	switch p.Mode {
+	case models.ModeStaged:
+		return repo.GetStagedDiff()
+	case models.ModeUnstaged:
+		return repo.GetUnstagedDiff()
+	default: // branches and commits both use GetDiff with refs
+		return repo.GetDiff(p.SourceBranch, p.TargetBranch)
 	}
 }
 
@@ -408,11 +478,6 @@ func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 
 // handleAddRepository adds a new repository
 func (s *Server) handleAddRepository(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.renderError(w, "Method Not Allowed", "This method is not allowed for this endpoint", http.StatusMethodNotAllowed)
-		return
-	}
-
 	// Parse the form data
 	if err := r.ParseForm(); err != nil {
 		s.renderError(w, "Invalid Form", "Invalid form data submitted", http.StatusBadRequest)
@@ -442,30 +507,19 @@ func (s *Server) handleAddRepository(w http.ResponseWriter, r *http.Request) {
 
 // handleReviewState handles saving and loading review state
 func (s *Server) handleReviewState(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.renderError(w, "Method Not Allowed", "This method is not allowed for this endpoint", http.StatusMethodNotAllowed)
-		return
-	}
-
 	// Get required parameters
-	repoPath := r.URL.Query().Get("repo")
-	sourceBranch := r.URL.Query().Get("source")
-	targetBranch := r.URL.Query().Get("target")
-	sourceCommit := r.URL.Query().Get("source_commit")
-	targetCommit := r.URL.Query().Get("target_commit")
-	filePath := r.URL.Query().Get("file")
+	p := parseDiffParams(r)
 	status := r.URL.Query().Get("status")
 	nextFilePath := r.URL.Query().Get("next")
-	mode := getDiffMode(r)
 
 	// For staged/unstaged modes, source/target branches are not required
-	if mode == models.ModeStaged || mode == models.ModeUnstaged {
-		if repoPath == "" || sourceCommit == "" || targetCommit == "" || filePath == "" || status == "" {
+	if p.Mode == models.ModeStaged || p.Mode == models.ModeUnstaged {
+		if p.RepoPath == "" || p.SourceCommit == "" || p.TargetCommit == "" || p.FilePath == "" || status == "" {
 			s.renderError(w, "Missing Parameters", "Missing required parameters for updating review state", http.StatusBadRequest)
 			return
 		}
 	} else {
-		if repoPath == "" || sourceBranch == "" || targetBranch == "" || sourceCommit == "" || targetCommit == "" || filePath == "" || status == "" {
+		if p.RepoPath == "" || p.SourceBranch == "" || p.TargetBranch == "" || p.SourceCommit == "" || p.TargetCommit == "" || p.FilePath == "" || status == "" {
 			s.renderError(w, "Missing Parameters", "Missing required parameters for updating review state", http.StatusBadRequest)
 			return
 		}
@@ -478,19 +532,19 @@ func (s *Server) handleReviewState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load existing review state
-	existingState, err := s.storage.LoadReviewState(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit)
+	existingState, err := s.storage.LoadReviewState(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit)
 	if err != nil {
 		s.renderError(w, "Review State Error", fmt.Sprintf("Failed to load review state: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// Set diff mode on the state
-	existingState.DiffMode = mode
+	existingState.DiffMode = p.Mode
 
 	// Look for the file in the existing review state
 	fileFound := false
 	for i := range existingState.ReviewedFiles {
-		if existingState.ReviewedFiles[i].Path == filePath && existingState.ReviewedFiles[i].Repo == repoPath {
+		if existingState.ReviewedFiles[i].Path == p.FilePath && existingState.ReviewedFiles[i].Repo == p.RepoPath {
 			// Update existing file review
 			if existingState.ReviewedFiles[i].Lines == nil {
 				existingState.ReviewedFiles[i].Lines = make(map[string]string)
@@ -504,34 +558,24 @@ func (s *Server) handleReviewState(w http.ResponseWriter, r *http.Request) {
 	// If file not found, add it to the review state
 	if !fileFound {
 		existingState.ReviewedFiles = append(existingState.ReviewedFiles, models.FileReview{
-			Repo:  repoPath,
-			Path:  filePath,
+			Repo:  p.RepoPath,
+			Path:  p.FilePath,
 			Lines: map[string]string{"all": status},
 		})
 	}
 
 	// Save updated review state
-	if err := s.storage.SaveReviewState(existingState, repoPath); err != nil {
+	if err := s.storage.SaveReviewState(existingState, p.RepoPath); err != nil {
 		s.renderError(w, "Review State Error", fmt.Sprintf("Failed to save review state: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Determine where to redirect
-	redirectPath := fmt.Sprintf("/diff?repo=%s&source=%s&target=%s&source_commit=%s&target_commit=%s&mode=%s",
-		url.QueryEscape(repoPath),
-		url.QueryEscape(sourceBranch),
-		url.QueryEscape(targetBranch),
-		url.QueryEscape(sourceCommit),
-		url.QueryEscape(targetCommit),
-		url.QueryEscape(mode))
-
-	// If next file specified and this was approved, rejected, or skipped, go to next file
+	// Determine where to redirect — navigate to next file on status action, otherwise stay
+	redirectFile := p.FilePath
 	if nextFilePath != "" && (status == models.StateApproved || status == models.StateRejected || status == models.StateSkipped) {
-		redirectPath += "&file=" + url.QueryEscape(nextFilePath)
-	} else if filePath != "" {
-		// Otherwise stay on current file
-		redirectPath += "&file=" + url.QueryEscape(filePath)
+		redirectFile = nextFilePath
 	}
+	redirectPath := buildDiffRedirectURL(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit, p.Mode, redirectFile)
 
 	// Redirect to the appropriate diff view
 	http.Redirect(w, r, redirectPath, http.StatusSeeOther)
@@ -539,26 +583,22 @@ func (s *Server) handleReviewState(w http.ResponseWriter, r *http.Request) {
 
 // handleDiffView renders the diff visualization page
 func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
-	repoPath := r.URL.Query().Get("repo")
-	sourceBranch := r.URL.Query().Get("source")
-	targetBranch := r.URL.Query().Get("target")
-	filePath := r.URL.Query().Get("file")
-	mode := getDiffMode(r)
+	p := parseDiffParams(r)
 
 	// Validate required params based on mode
-	if repoPath == "" {
+	if p.RepoPath == "" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	if mode == models.ModeBranches || mode == models.ModeCommits {
-		if sourceBranch == "" || targetBranch == "" {
+	if p.Mode == models.ModeBranches || p.Mode == models.ModeCommits {
+		if p.SourceBranch == "" || p.TargetBranch == "" {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
 	}
 
 	// Check if the repository exists
-	repo, exists, err := s.GetRepository(repoPath)
+	repo, exists, err := s.GetRepository(p.RepoPath)
 	if err != nil {
 		s.renderError(w, "Repository Error", fmt.Sprintf("Error loading repository: %v", err), http.StatusInternalServerError)
 		return
@@ -569,23 +609,24 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get repository name from path for display
-	repoName := filepath.Base(repoPath)
+	repoName := filepath.Base(p.RepoPath)
 
-	// Compute source/target commits and display labels based on mode
-	var sourceCommit, targetCommit string
+	// Compute source/target commits and display labels based on mode.
+	// For branches/commits modes, reuse commit hashes from query params if already
+	// resolved by handleCompare — avoids redundant git rev-parse calls.
 	var sourceLabel, targetLabel string
 
-	switch mode {
+	switch p.Mode {
 	case models.ModeStaged:
 		headHash, err := repo.GetBranchCommitHash("HEAD")
 		if err != nil {
 			s.renderError(w, "Git Error", fmt.Sprintf("Failed to resolve HEAD: %v", err), http.StatusInternalServerError)
 			return
 		}
-		sourceCommit = headHash
-		targetCommit = "staged-" + headHash
-		sourceBranch = "HEAD"
-		targetBranch = "staged"
+		p.SourceCommit = headHash
+		p.TargetCommit = "staged-" + headHash
+		p.SourceBranch = "HEAD"
+		p.TargetBranch = "staged"
 		sourceLabel = "HEAD"
 		targetLabel = "Staged Changes"
 
@@ -595,69 +636,79 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 			s.renderError(w, "Git Error", fmt.Sprintf("Failed to resolve HEAD: %v", err), http.StatusInternalServerError)
 			return
 		}
-		sourceCommit = headHash
-		targetCommit = "unstaged-" + headHash
-		sourceBranch = "HEAD"
-		targetBranch = "unstaged"
+		p.SourceCommit = headHash
+		p.TargetCommit = "unstaged-" + headHash
+		p.SourceBranch = "HEAD"
+		p.TargetBranch = "unstaged"
 		sourceLabel = "HEAD"
 		targetLabel = "Working Tree"
 
 	case models.ModeCommits:
-		var err error
-		sourceCommit, err = repo.GetBranchCommitHash(sourceBranch)
-		if err != nil {
-			s.renderError(w, "Ref Error", fmt.Sprintf("Failed to resolve source ref: %v", err), http.StatusInternalServerError)
-			return
+		if p.SourceCommit == "" {
+			var err error
+			p.SourceCommit, err = repo.GetBranchCommitHash(p.SourceBranch)
+			if err != nil {
+				s.renderError(w, "Ref Error", fmt.Sprintf("Failed to resolve source ref: %v", err), http.StatusInternalServerError)
+				return
+			}
 		}
-		targetCommit, err = repo.GetBranchCommitHash(targetBranch)
-		if err != nil {
-			s.renderError(w, "Ref Error", fmt.Sprintf("Failed to resolve target ref: %v", err), http.StatusInternalServerError)
-			return
+		if p.TargetCommit == "" {
+			var err error
+			p.TargetCommit, err = repo.GetBranchCommitHash(p.TargetBranch)
+			if err != nil {
+				s.renderError(w, "Ref Error", fmt.Sprintf("Failed to resolve target ref: %v", err), http.StatusInternalServerError)
+				return
+			}
 		}
-		sourceLabel = sourceBranch
-		targetLabel = targetBranch
+		sourceLabel = p.SourceBranch
+		targetLabel = p.TargetBranch
 
 	default: // branches
-		var err error
-		sourceCommit, err = repo.GetBranchCommitHash(sourceBranch)
-		if err != nil {
-			s.renderError(w, "Branch Error", fmt.Sprintf("Failed to get commit hash for source branch: %v", err), http.StatusInternalServerError)
-			return
+		if p.SourceCommit == "" {
+			var err error
+			p.SourceCommit, err = repo.GetBranchCommitHash(p.SourceBranch)
+			if err != nil {
+				s.renderError(w, "Branch Error", fmt.Sprintf("Failed to get commit hash for source branch: %v", err), http.StatusInternalServerError)
+				return
+			}
 		}
-		targetCommit, err = repo.GetBranchCommitHash(targetBranch)
-		if err != nil {
-			s.renderError(w, "Branch Error", fmt.Sprintf("Failed to get commit hash for target branch: %v", err), http.StatusInternalServerError)
-			return
+		if p.TargetCommit == "" {
+			var err error
+			p.TargetCommit, err = repo.GetBranchCommitHash(p.TargetBranch)
+			if err != nil {
+				s.renderError(w, "Branch Error", fmt.Sprintf("Failed to get commit hash for target branch: %v", err), http.StatusInternalServerError)
+				return
+			}
 		}
-		sourceLabel = sourceBranch
-		targetLabel = targetBranch
+		sourceLabel = p.SourceBranch
+		targetLabel = p.TargetBranch
 	}
 
 	// Load review state
 	var reviewState *models.ReviewState
-	reviewState, err = s.storage.LoadReviewState(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit)
+	reviewState, err = s.storage.LoadReviewState(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit)
 	if err != nil {
 		reviewState = &models.ReviewState{
 			ReviewedFiles: []models.FileReview{},
-			SourceBranch:  sourceBranch,
-			TargetBranch:  targetBranch,
-			SourceCommit:  sourceCommit,
-			TargetCommit:  targetCommit,
-			DiffMode:      mode,
+			SourceBranch:  p.SourceBranch,
+			TargetBranch:  p.TargetBranch,
+			SourceCommit:  p.SourceCommit,
+			TargetCommit:  p.TargetCommit,
+			DiffMode:      p.Mode,
 		}
 	}
 
 	// Data to pass to the template
 	data := map[string]interface{}{
-		"RepoPath":     repoPath,
+		"RepoPath":     p.RepoPath,
 		"RepoName":     repoName,
-		"SourceBranch": sourceBranch,
-		"TargetBranch": targetBranch,
-		"SourceCommit": sourceCommit,
-		"TargetCommit": targetCommit,
+		"SourceBranch": p.SourceBranch,
+		"TargetBranch": p.TargetBranch,
+		"SourceCommit": p.SourceCommit,
+		"TargetCommit": p.TargetCommit,
 		"SourceLabel":  sourceLabel,
 		"TargetLabel":  targetLabel,
-		"DiffMode":     mode,
+		"DiffMode":     p.Mode,
 		"Error":        "",
 		"NoDiff":       false,
 		"ReviewState":  reviewState,
@@ -667,54 +718,91 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 	var fullDiffText string
 	var fullDiffErr error
 	var files []map[string]string
+	var parsedFiles []models.DiffFile
 
-	switch mode {
-	case models.ModeStaged:
-		fullDiffText, fullDiffErr = repo.GetStagedDiff()
-	case models.ModeUnstaged:
-		fullDiffText, fullDiffErr = repo.GetUnstagedDiff()
-	default: // branches and commits both use GetDiff with refs
-		fullDiffText, fullDiffErr = repo.GetDiff(sourceBranch, targetBranch)
-	}
+	fullDiffText, fullDiffErr = getDiffForMode(repo, p)
 
 	if fullDiffErr != nil {
 		data["Error"] = fmt.Sprintf("Failed to load diff: %v", fullDiffErr)
 	} else if fullDiffText == "" {
 		data["NoDiff"] = true
 	} else {
-		// Extract file paths from diff
-		files = extractFilesFromDiff(fullDiffText, reviewState, repoPath)
+		// Parse into structured diff files
+		parsedFiles = git.ParseDiff(fullDiffText)
+		data["ParsedFiles"] = parsedFiles
+
+		// Extract file paths from parsed diff (for sidebar)
+		files = extractFilesFromDiff(parsedFiles, reviewState, p.RepoPath)
 		data["Files"] = files
 	}
 
-	if filePath == "" {
+	// Load review comments
+	review, reviewErr := s.storage.LoadReview(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit)
+	if reviewErr != nil {
+		review = &models.Review{
+			RepoPath:     p.RepoPath,
+			SourceBranch: p.SourceBranch,
+			TargetBranch: p.TargetBranch,
+			SourceCommit: p.SourceCommit,
+			TargetCommit: p.TargetCommit,
+			Comments:     []models.ReviewComment{},
+			Status:       models.ReviewStatusDraft,
+		}
+	}
+	data["Review"] = review
+	data["ReviewComments"] = review.Comments
+
+	// Count open comments for the submit button badge
+	openComments := 0
+	for _, c := range review.Comments {
+		if c.Status == models.CommentStatusOpen {
+			openComments++
+		}
+	}
+	data["OpenCommentCount"] = openComments
+
+	if p.FilePath == "" {
 		s.render(w, "diff.html", data)
 		return
 	}
 
-	// If a specific file is requested, load its diff based on mode
-	var diffText string
-	var err2 error
-
-	switch mode {
-	case models.ModeStaged:
-		diffText, err2 = repo.GetStagedFileDiff(filePath)
-	case models.ModeUnstaged:
-		diffText, err2 = repo.GetUnstagedFileDiff(filePath)
-	default: // branches and commits
-		diffText, err2 = repo.GetFileDiff(sourceBranch, targetBranch, filePath)
+	// If a specific file is requested, find it from the already-parsed full diff.
+	// This avoids a redundant git call + re-parse that the old code performed.
+	var selectedFile *models.DiffFile
+	for i := range parsedFiles {
+		if parsedFiles[i].Path == p.FilePath {
+			selectedFile = &parsedFiles[i]
+			break
+		}
 	}
 
-	if err2 != nil {
-		data["Error"] = fmt.Sprintf("Failed to load diff: %v", err2)
+	if selectedFile == nil {
+		data["Error"] = fmt.Sprintf("File %q not found in diff", p.FilePath)
 	} else {
-		data["SelectedFile"] = filePath
-		data["DiffLines"] = strings.Split(diffText, "\n")
+		data["SelectedFile"] = p.FilePath
+		data["SelectedFileParsed"] = *selectedFile
+		data["SelectedFileLanguage"] = git.DetectLanguage(p.FilePath)
+
+		// Reconstruct raw diff lines from parsed hunks for the fallback raw view
+		var diffLines []string
+		for _, section := range selectedFile.Sections {
+			diffLines = append(diffLines, section.Lines...)
+		}
+		data["DiffLines"] = diffLines
+
+		// Filter comments for selected file
+		var fileComments []models.ReviewComment
+		for _, c := range review.Comments {
+			if c.FilePath == p.FilePath {
+				fileComments = append(fileComments, c)
+			}
+		}
+		data["FileComments"] = fileComments
 
 		// Determine the file status for display in the UI
 		fileStatus := "unreviewed"
 		for _, review := range reviewState.ReviewedFiles {
-			if review.Path == filePath && review.Repo == repoPath {
+			if review.Path == p.FilePath && review.Repo == p.RepoPath {
 				// Check if all lines have the same status
 				statuses := make(map[string]bool)
 				for _, status := range review.Lines {
@@ -737,7 +825,7 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 		if len(files) > 0 {
 			currentIndex := -1
 			for i, file := range files {
-				if file["Path"] == filePath {
+				if file["Path"] == p.FilePath {
 					currentIndex = i
 					break
 				}
@@ -753,9 +841,8 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 }
 
 // extractFilesFromDiff extracts file paths from a diff output
-func extractFilesFromDiff(diffText string, reviewState *models.ReviewState, repoPath string) []map[string]string {
+func extractFilesFromDiff(parsedFiles []models.DiffFile, reviewState *models.ReviewState, repoPath string) []map[string]string {
 	var files []map[string]string
-	lines := strings.Split(diffText, "\n")
 
 	// Map to store file status
 	fileStatusMap := make(map[string]string)
@@ -792,31 +879,17 @@ func extractFilesFromDiff(diffText string, reviewState *models.ReviewState, repo
 		fileStatusMap[review.Path] = status
 	}
 
-	// Extract files from diff
-	for _, line := range lines {
-		if strings.HasPrefix(line, "diff --git ") {
-			// Extract file path from the diff line
-			// Format is typically: diff --git a/path/to/file b/path/to/file
-			parts := strings.Split(line, " ")
-			if len(parts) >= 4 {
-				bPath := parts[3]
-				// Remove the "b/" prefix
-				if strings.HasPrefix(bPath, "b/") {
-					filePath := bPath[2:] // Skip the "b/" prefix
-
-					// Get status, default to "unreviewed"
-					status, exists := fileStatusMap[filePath]
-					if !exists {
-						status = "unreviewed"
-					}
-
-					files = append(files, map[string]string{
-						"Path":   filePath,
-						"Status": status,
-					})
-				}
-			}
+	// Build file list from already-parsed structured diff data
+	for _, f := range parsedFiles {
+		status, exists := fileStatusMap[f.Path]
+		if !exists {
+			status = "unreviewed"
 		}
+
+		files = append(files, map[string]string{
+			"Path":   f.Path,
+			"Status": status,
+		})
 	}
 
 	// Sort files by status and then alphabetically
@@ -847,48 +920,493 @@ func extractFilesFromDiff(diffText string, reviewState *models.ReviewState, repo
 	return files
 }
 
-// render renders a template with the given data
-func (s *Server) render(w http.ResponseWriter, templateName string, data interface{}) {
-	// Set content type
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+// generateCommentID generates a random hex ID for a review comment
+func generateCommentID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate random ID: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
 
+// buildDiffRedirectURL constructs the redirect URL for returning to the diff view
+func buildDiffRedirectURL(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit, mode, filePath string) string {
+	redirectURL := fmt.Sprintf("/diff?repo=%s&source=%s&target=%s&source_commit=%s&target_commit=%s&mode=%s",
+		url.QueryEscape(repoPath),
+		url.QueryEscape(sourceBranch),
+		url.QueryEscape(targetBranch),
+		url.QueryEscape(sourceCommit),
+		url.QueryEscape(targetCommit),
+		url.QueryEscape(mode))
+	if filePath != "" {
+		redirectURL += "&file=" + url.QueryEscape(filePath)
+	}
+	return redirectURL
+}
+
+// loadOrCreateReview loads an existing review or creates a new draft
+func (s *Server) loadOrCreateReview(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit, mode string) (*models.Review, error) {
+	review, err := s.storage.LoadReview(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit)
+	if err != nil {
+		return nil, err
+	}
+	if review.ID == "" {
+		id, err := generateCommentID()
+		if err != nil {
+			return nil, err
+		}
+		review.ID = id
+		review.RepoPath = repoPath
+		review.SourceBranch = sourceBranch
+		review.TargetBranch = targetBranch
+		review.SourceCommit = sourceCommit
+		review.TargetCommit = targetCommit
+		review.DiffMode = mode
+		review.Status = models.ReviewStatusDraft
+		review.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	return review, nil
+}
+
+// handleAddComment handles POST /api/review/comment — adds a new inline comment
+func (s *Server) handleAddComment(w http.ResponseWriter, r *http.Request) {
+	// Parse form data
+	if err := r.ParseForm(); err != nil {
+		s.renderError(w, "Invalid Form", "Invalid form data submitted", http.StatusBadRequest)
+		return
+	}
+
+	// Read context params from query string
+	p := parseDiffParams(r)
+
+	// Read comment data from form body
+	filePath := r.FormValue("file_path")
+	startLineStr := r.FormValue("start_line")
+	endLineStr := r.FormValue("end_line")
+	side := r.FormValue("side")
+	body := r.FormValue("body")
+
+	if p.RepoPath == "" || p.SourceCommit == "" || p.TargetCommit == "" || filePath == "" || body == "" || startLineStr == "" {
+		s.renderError(w, "Missing Parameters", "Missing required parameters for adding a comment", http.StatusBadRequest)
+		return
+	}
+
+	startLine, err := strconv.Atoi(startLineStr)
+	if err != nil {
+		s.renderError(w, "Invalid Parameter", "start_line must be a number", http.StatusBadRequest)
+		return
+	}
+
+	endLine := startLine
+	if endLineStr != "" {
+		endLine, err = strconv.Atoi(endLineStr)
+		if err != nil {
+			s.renderError(w, "Invalid Parameter", "end_line must be a number", http.StatusBadRequest)
+			return
+		}
+	}
+
+	if side == "" {
+		side = "right"
+	}
+
+	// Load or create review
+	review, err := s.loadOrCreateReview(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit, p.Mode)
+	if err != nil {
+		s.renderError(w, "Review Error", fmt.Sprintf("Failed to load review: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Generate comment ID
+	commentID, err := generateCommentID()
+	if err != nil {
+		s.renderError(w, "Internal Error", "Failed to generate comment ID", http.StatusInternalServerError)
+		return
+	}
+
+	// Create comment
+	comment := models.ReviewComment{
+		ID:        commentID,
+		FilePath:  filePath,
+		StartLine: startLine,
+		EndLine:   endLine,
+		Side:      side,
+		Body:      body,
+		Status:    models.CommentStatusOpen,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	review.Comments = append(review.Comments, comment)
+
+	// Save review
+	if err := s.storage.SaveReview(review, p.RepoPath); err != nil {
+		s.renderError(w, "Storage Error", fmt.Sprintf("Failed to save comment: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Redirect back to diff view
+	redirectURL := buildDiffRedirectURL(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit, p.Mode, filePath)
+	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+}
+
+// handleDeleteComment handles DELETE /api/review/comment — removes a comment
+func (s *Server) handleDeleteComment(w http.ResponseWriter, r *http.Request) {
+	p := parseDiffParams(r)
+	commentID := r.URL.Query().Get("comment_id")
+
+	if p.RepoPath == "" || p.SourceCommit == "" || p.TargetCommit == "" || commentID == "" {
+		s.renderError(w, "Missing Parameters", "Missing required parameters for deleting a comment", http.StatusBadRequest)
+		return
+	}
+
+	review, err := s.storage.LoadReview(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit)
+	if err != nil {
+		s.renderError(w, "Review Error", fmt.Sprintf("Failed to load review: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Remove the comment
+	found := false
+	newComments := make([]models.ReviewComment, 0, len(review.Comments))
+	for _, c := range review.Comments {
+		if c.ID == commentID {
+			found = true
+			continue
+		}
+		newComments = append(newComments, c)
+	}
+	if !found {
+		s.renderError(w, "Not Found", "Comment not found", http.StatusNotFound)
+		return
+	}
+	review.Comments = newComments
+
+	if err := s.storage.SaveReview(review, p.RepoPath); err != nil {
+		s.renderError(w, "Storage Error", fmt.Sprintf("Failed to save review: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	redirectURL := buildDiffRedirectURL(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit, p.Mode, p.FilePath)
+	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+}
+
+// handleResolveComment handles POST /api/review/comment/resolve — toggles resolve/reopen
+func (s *Server) handleResolveComment(w http.ResponseWriter, r *http.Request) {
+	p := parseDiffParams(r)
+	commentID := r.URL.Query().Get("comment_id")
+
+	if p.RepoPath == "" || p.SourceCommit == "" || p.TargetCommit == "" || commentID == "" {
+		s.renderError(w, "Missing Parameters", "Missing required parameters for resolving a comment", http.StatusBadRequest)
+		return
+	}
+
+	review, err := s.storage.LoadReview(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit)
+	if err != nil {
+		s.renderError(w, "Review Error", fmt.Sprintf("Failed to load review: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Toggle comment status
+	found := false
+	for i := range review.Comments {
+		if review.Comments[i].ID == commentID {
+			found = true
+			if review.Comments[i].Status == models.CommentStatusOpen {
+				review.Comments[i].Status = models.CommentStatusResolved
+				review.Comments[i].ResolvedAt = time.Now().UTC().Format(time.RFC3339)
+			} else {
+				review.Comments[i].Status = models.CommentStatusOpen
+				review.Comments[i].ResolvedAt = ""
+			}
+			break
+		}
+	}
+	if !found {
+		s.renderError(w, "Not Found", "Comment not found", http.StatusNotFound)
+		return
+	}
+
+	if err := s.storage.SaveReview(review, p.RepoPath); err != nil {
+		s.renderError(w, "Storage Error", fmt.Sprintf("Failed to save review: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	redirectURL := buildDiffRedirectURL(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit, p.Mode, p.FilePath)
+	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+}
+
+// handleSubmitReview handles POST /api/review/submit — submits the review and generates markdown
+func (s *Server) handleSubmitReview(w http.ResponseWriter, r *http.Request) {
+	p := parseDiffParams(r)
+
+	if p.RepoPath == "" || p.SourceCommit == "" || p.TargetCommit == "" {
+		s.renderError(w, "Missing Parameters", "Missing required parameters for submitting review", http.StatusBadRequest)
+		return
+	}
+
+	review, err := s.storage.LoadReview(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit)
+	if err != nil {
+		s.renderError(w, "Review Error", fmt.Sprintf("Failed to load review: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Mark review as submitted
+	review.Status = models.ReviewStatusSubmitted
+	review.SubmittedAt = time.Now().UTC().Format(time.RFC3339)
+
+	// Save updated review
+	if err := s.storage.SaveReview(review, p.RepoPath); err != nil {
+		s.renderError(w, "Storage Error", fmt.Sprintf("Failed to save review: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the diff to generate markdown export with code context
+	repo, exists, err := s.GetRepository(p.RepoPath)
+	if err != nil || !exists {
+		s.renderError(w, "Repository Error", "Repository not found", http.StatusNotFound)
+		return
+	}
+
+	fullDiffText, _ := getDiffForMode(repo, p)
+
+	// Generate markdown export
+	markdown := generateMarkdownExport(review, fullDiffText)
+
+	// Render confirmation page
+	data := map[string]interface{}{
+		"RepoPath":     p.RepoPath,
+		"RepoName":     filepath.Base(p.RepoPath),
+		"SourceBranch": p.SourceBranch,
+		"TargetBranch": p.TargetBranch,
+		"SourceCommit": p.SourceCommit,
+		"TargetCommit": p.TargetCommit,
+		"DiffMode":     p.Mode,
+		"Review":       review,
+		"Markdown":     markdown,
+	}
+	s.render(w, "review_submitted.html", data)
+}
+
+// handleExportReview handles GET /api/review/export — returns markdown export
+func (s *Server) handleExportReview(w http.ResponseWriter, r *http.Request) {
+	p := parseDiffParams(r)
+
+	if p.RepoPath == "" || p.SourceCommit == "" || p.TargetCommit == "" {
+		http.Error(w, "Missing required parameters", http.StatusBadRequest)
+		return
+	}
+
+	review, err := s.storage.LoadReview(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to load review: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Get the diff for code context
+	repo, exists, repoErr := s.GetRepository(p.RepoPath)
+	var fullDiffText string
+	if repoErr == nil && exists {
+		fullDiffText, _ = getDiffForMode(repo, p)
+	}
+
+	markdown := generateMarkdownExport(review, fullDiffText)
+
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Write([]byte(markdown))
+}
+
+// generateMarkdownExport creates a formatted markdown document from a review with code context
+func generateMarkdownExport(review *models.Review, rawDiff string) string {
+	var buf bytes.Buffer
+
+	repoName := filepath.Base(review.RepoPath)
+	sourceLabel := review.SourceBranch
+	if sourceLabel == "" {
+		sourceLabel = review.SourceCommit
+	}
+	targetLabel := review.TargetBranch
+	if targetLabel == "" {
+		targetLabel = review.TargetCommit
+	}
+
+	// Count open comments
+	openCount := 0
+	for _, c := range review.Comments {
+		if c.Status == models.CommentStatusOpen {
+			openCount++
+		}
+	}
+
+	// Header
+	buf.WriteString("# Code Review\n\n")
+	buf.WriteString(fmt.Sprintf("**Repository**: %s\n", repoName))
+	buf.WriteString(fmt.Sprintf("**Comparing**: %s -> %s\n", sourceLabel, targetLabel))
+	if len(review.SourceCommit) >= 8 {
+		buf.WriteString(fmt.Sprintf("**Source commit**: %s\n", review.SourceCommit[:8]))
+	}
+	if len(review.TargetCommit) >= 8 {
+		buf.WriteString(fmt.Sprintf("**Target commit**: %s\n", review.TargetCommit[:8]))
+	}
+	buf.WriteString(fmt.Sprintf("**Date**: %s\n", time.Now().UTC().Format(time.RFC3339)))
+	buf.WriteString(fmt.Sprintf("**Comments**: %d\n", openCount))
+	buf.WriteString("\n---\n\n")
+
+	// Parse diff for code context
+	parsedFiles := git.ParseDiff(rawDiff)
+	fileMap := make(map[string]models.DiffFile)
+	for _, f := range parsedFiles {
+		fileMap[f.Path] = f
+	}
+
+	// Group open comments by file, then sort by line
+	grouped := make(map[string][]models.ReviewComment)
+	for _, c := range review.Comments {
+		if c.Status != models.CommentStatusOpen {
+			continue
+		}
+		grouped[c.FilePath] = append(grouped[c.FilePath], c)
+	}
+
+	// Sort file keys
+	fileKeys := make([]string, 0, len(grouped))
+	for k := range grouped {
+		fileKeys = append(fileKeys, k)
+	}
+	sort.Strings(fileKeys)
+
+	for _, filePath := range fileKeys {
+		comments := grouped[filePath]
+		// Sort comments by start line
+		sort.Slice(comments, func(i, j int) bool {
+			return comments[i].StartLine < comments[j].StartLine
+		})
+
+		lang := git.DetectLanguage(filePath)
+		buf.WriteString(fmt.Sprintf("## %s\n\n", filePath))
+
+		for _, c := range comments {
+			// Line header
+			if c.StartLine == c.EndLine {
+				buf.WriteString(fmt.Sprintf("### Line %d\n\n", c.StartLine))
+			} else {
+				buf.WriteString(fmt.Sprintf("### Lines %d-%d\n\n", c.StartLine, c.EndLine))
+			}
+
+			// Code context — find surrounding lines from parsed diff
+			contextLines := getCodeContext(fileMap, filePath, c.StartLine, c.EndLine, c.Side)
+			if len(contextLines) > 0 {
+				buf.WriteString(fmt.Sprintf("```%s\n", lang))
+				for _, line := range contextLines {
+					buf.WriteString(line + "\n")
+				}
+				buf.WriteString("```\n\n")
+			}
+
+			// Comment body as blockquote
+			for _, line := range strings.Split(c.Body, "\n") {
+				buf.WriteString("> " + line + "\n")
+			}
+			buf.WriteString("\n---\n\n")
+		}
+	}
+
+	return buf.String()
+}
+
+// getCodeContext extracts 3-5 lines of surrounding code context from the parsed diff.
+// side controls which line numbers to match: "left" uses left-side (deleted lines),
+// "right" uses right-side (added lines), and any other value (including "both") checks both sides.
+func getCodeContext(fileMap map[string]models.DiffFile, filePath string, startLine, endLine int, side string) []string {
+	df, ok := fileMap[filePath]
+	if !ok {
+		return nil
+	}
+
+	var contextLines []string
+
+	for _, hunk := range df.Sections {
+		for i, line := range hunk.Lines {
+			leftLine := 0
+			if i < len(hunk.LineNumbers.Left) {
+				leftLine = hunk.LineNumbers.Left[i]
+			}
+			rightLine := 0
+			if i < len(hunk.LineNumbers.Right) {
+				rightLine = hunk.LineNumbers.Right[i]
+			}
+
+			// Select the line number to match based on the comment's side
+			var match bool
+			switch side {
+			case "left":
+				match = leftLine > 0 && leftLine >= startLine-2 && leftLine <= endLine+2
+			case "right":
+				match = rightLine > 0 && rightLine >= startLine-2 && rightLine <= endLine+2
+			default: // "both" or unspecified — check either side
+				match = (rightLine > 0 && rightLine >= startLine-2 && rightLine <= endLine+2) ||
+					(leftLine > 0 && leftLine >= startLine-2 && leftLine <= endLine+2)
+			}
+
+			if match {
+				// Strip the leading +/-/space prefix for cleaner output
+				cleanLine := line
+				if len(line) > 0 && (line[0] == '+' || line[0] == '-' || line[0] == ' ') {
+					cleanLine = line[1:]
+				}
+				contextLines = append(contextLines, cleanLine)
+			}
+		}
+	}
+
+	return contextLines
+}
+
+// render renders a template with the given data and a 200 OK status
+func (s *Server) render(w http.ResponseWriter, templateName string, data interface{}) {
+	s.renderWithStatus(w, templateName, data, http.StatusOK)
+}
+
+// renderWithStatus renders a template with the given data and HTTP status code.
+// It buffers all template output before writing to w, so that headers and status
+// code are only sent after successful rendering.
+func (s *Server) renderWithStatus(w http.ResponseWriter, templateName string, data interface{}, statusCode int) {
 	// First render the content template to a buffer
 	var contentBuf bytes.Buffer
 	if err := s.tmpl.ExecuteTemplate(&contentBuf, templateName, data); err != nil {
-		// We can't use renderError here as it would cause an infinite loop if the error is in error.html
 		log.Printf("Error rendering content template %s: %v", templateName, err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("<html><body><h1>Internal Server Error</h1><p>Failed to render page. Please try again later.</p></body></html>"))
 		return
 	}
 
-	// Then render the layout with the pre-rendered content
+	// Then render the layout with the pre-rendered content into a second buffer
 	layoutData := map[string]interface{}{
 		"Content":         templateName,
 		"ContentData":     data,
 		"RenderedContent": template.HTML(contentBuf.String()),
 	}
 
-	if err := s.tmpl.ExecuteTemplate(w, "layout.html", layoutData); err != nil {
-		// We can't use renderError here as it would cause an infinite loop if the error is in layout.html
+	var layoutBuf bytes.Buffer
+	if err := s.tmpl.ExecuteTemplate(&layoutBuf, "layout.html", layoutData); err != nil {
 		log.Printf("Error rendering layout template: %v", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("<html><body><h1>Internal Server Error</h1><p>Failed to render page layout. Please try again later.</p></body></html>"))
 		return
 	}
+
+	// Both templates rendered successfully — now write headers and body
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(statusCode)
+	w.Write(layoutBuf.Bytes())
 }
 
 // renderError renders an error page with the given status code and message
 func (s *Server) renderError(w http.ResponseWriter, title string, message string, statusCode int) {
-	// Set the HTTP status code
-	w.WriteHeader(statusCode)
-
-	// Prepare error data
 	errorData := map[string]interface{}{
 		"Title":   title,
 		"Message": message,
 	}
-
-	// Render the error template
-	s.render(w, "error.html", errorData)
+	s.renderWithStatus(w, "error.html", errorData, statusCode)
 }

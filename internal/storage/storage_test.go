@@ -10,11 +10,7 @@ import (
 
 func TestJSONStorage(t *testing.T) {
 	// Create a temporary directory for the test
-	tempDir, err := os.MkdirTemp("", "diffty-test")
-	if err != nil {
-		t.Fatalf("Failed to create temporary directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	// Create a test .diffty directory
 	difftyDir := filepath.Join(tempDir, ".diffty")
@@ -208,13 +204,472 @@ func TestJSONStorage(t *testing.T) {
 	})
 }
 
+func TestSaveAndLoadReview(t *testing.T) {
+	tempDir := t.TempDir()
+
+	difftyDir := filepath.Join(tempDir, ".diffty")
+	if err := os.MkdirAll(difftyDir, 0755); err != nil {
+		t.Fatalf("Failed to create .diffty directory: %v", err)
+	}
+
+	storage := &JSONStorage{
+		baseStoragePath: difftyDir,
+		reposPath:       filepath.Join(difftyDir, "repositories.json"),
+	}
+
+	t.Run("SaveAndReloadReviewWithComments", func(t *testing.T) {
+		review := &models.Review{
+			ID:           "review-001",
+			RepoPath:     "/home/user/myrepo",
+			SourceBranch: "feature-xyz",
+			TargetBranch: "main",
+			SourceCommit: "aaa111",
+			TargetCommit: "bbb222",
+			DiffMode:     models.ModeBranches,
+			Status:       models.ReviewStatusDraft,
+			CreatedAt:    "2025-06-15T10:30:00Z",
+			Comments: []models.ReviewComment{
+				{
+					ID:         "comment-1",
+					FilePath:   "internal/server/server.go",
+					StartLine:  10,
+					EndLine:    15,
+					Side:       "right",
+					Body:       "This needs refactoring",
+					Status:     models.CommentStatusOpen,
+					CreatedAt:  "2025-06-15T10:31:00Z",
+					ResolvedAt: "",
+				},
+				{
+					ID:         "comment-2",
+					FilePath:   "internal/git/git.go",
+					StartLine:  42,
+					EndLine:    42,
+					Side:       "left",
+					Body:       "Resolved: looks good now",
+					Status:     models.CommentStatusResolved,
+					CreatedAt:  "2025-06-15T10:32:00Z",
+					ResolvedAt: "2025-06-15T11:00:00Z",
+				},
+			},
+		}
+
+		if err := storage.SaveReview(review, "/home/user/myrepo"); err != nil {
+			t.Fatalf("Failed to save review: %v", err)
+		}
+
+		loaded, err := storage.LoadReview("/home/user/myrepo", "feature-xyz", "main", "aaa111", "bbb222")
+		if err != nil {
+			t.Fatalf("Failed to load review: %v", err)
+		}
+
+		// Verify top-level fields
+		if loaded.ID != "review-001" {
+			t.Errorf("Expected ID 'review-001', got '%s'", loaded.ID)
+		}
+		if loaded.RepoPath != "/home/user/myrepo" {
+			t.Errorf("Expected RepoPath '/home/user/myrepo', got '%s'", loaded.RepoPath)
+		}
+		if loaded.SourceBranch != "feature-xyz" {
+			t.Errorf("Expected SourceBranch 'feature-xyz', got '%s'", loaded.SourceBranch)
+		}
+		if loaded.TargetBranch != "main" {
+			t.Errorf("Expected TargetBranch 'main', got '%s'", loaded.TargetBranch)
+		}
+		if loaded.SourceCommit != "aaa111" {
+			t.Errorf("Expected SourceCommit 'aaa111', got '%s'", loaded.SourceCommit)
+		}
+		if loaded.TargetCommit != "bbb222" {
+			t.Errorf("Expected TargetCommit 'bbb222', got '%s'", loaded.TargetCommit)
+		}
+		if loaded.DiffMode != models.ModeBranches {
+			t.Errorf("Expected DiffMode '%s', got '%s'", models.ModeBranches, loaded.DiffMode)
+		}
+		if loaded.Status != models.ReviewStatusDraft {
+			t.Errorf("Expected Status '%s', got '%s'", models.ReviewStatusDraft, loaded.Status)
+		}
+		if loaded.CreatedAt != "2025-06-15T10:30:00Z" {
+			t.Errorf("Expected CreatedAt '2025-06-15T10:30:00Z', got '%s'", loaded.CreatedAt)
+		}
+
+		// Verify comments
+		if len(loaded.Comments) != 2 {
+			t.Fatalf("Expected 2 comments, got %d", len(loaded.Comments))
+		}
+
+		c1 := loaded.Comments[0]
+		if c1.ID != "comment-1" {
+			t.Errorf("Comment 1: expected ID 'comment-1', got '%s'", c1.ID)
+		}
+		if c1.FilePath != "internal/server/server.go" {
+			t.Errorf("Comment 1: expected FilePath 'internal/server/server.go', got '%s'", c1.FilePath)
+		}
+		if c1.StartLine != 10 {
+			t.Errorf("Comment 1: expected StartLine 10, got %d", c1.StartLine)
+		}
+		if c1.EndLine != 15 {
+			t.Errorf("Comment 1: expected EndLine 15, got %d", c1.EndLine)
+		}
+		if c1.Side != "right" {
+			t.Errorf("Comment 1: expected Side 'right', got '%s'", c1.Side)
+		}
+		if c1.Body != "This needs refactoring" {
+			t.Errorf("Comment 1: expected Body 'This needs refactoring', got '%s'", c1.Body)
+		}
+		if c1.Status != models.CommentStatusOpen {
+			t.Errorf("Comment 1: expected Status '%s', got '%s'", models.CommentStatusOpen, c1.Status)
+		}
+		if c1.CreatedAt != "2025-06-15T10:31:00Z" {
+			t.Errorf("Comment 1: expected CreatedAt '2025-06-15T10:31:00Z', got '%s'", c1.CreatedAt)
+		}
+
+		c2 := loaded.Comments[1]
+		if c2.ID != "comment-2" {
+			t.Errorf("Comment 2: expected ID 'comment-2', got '%s'", c2.ID)
+		}
+		if c2.Status != models.CommentStatusResolved {
+			t.Errorf("Comment 2: expected Status '%s', got '%s'", models.CommentStatusResolved, c2.Status)
+		}
+		if c2.ResolvedAt != "2025-06-15T11:00:00Z" {
+			t.Errorf("Comment 2: expected ResolvedAt '2025-06-15T11:00:00Z', got '%s'", c2.ResolvedAt)
+		}
+		if c2.Side != "left" {
+			t.Errorf("Comment 2: expected Side 'left', got '%s'", c2.Side)
+		}
+	})
+
+	t.Run("LoadNonExistentReviewReturnsEmpty", func(t *testing.T) {
+		loaded, err := storage.LoadReview("/nonexistent/repo", "feat", "main", "ccc333", "ddd444")
+		if err != nil {
+			t.Fatalf("Expected no error for non-existent review, got: %v", err)
+		}
+
+		if loaded.RepoPath != "/nonexistent/repo" {
+			t.Errorf("Expected RepoPath '/nonexistent/repo', got '%s'", loaded.RepoPath)
+		}
+		if loaded.SourceBranch != "feat" {
+			t.Errorf("Expected SourceBranch 'feat', got '%s'", loaded.SourceBranch)
+		}
+		if loaded.TargetBranch != "main" {
+			t.Errorf("Expected TargetBranch 'main', got '%s'", loaded.TargetBranch)
+		}
+		if loaded.SourceCommit != "ccc333" {
+			t.Errorf("Expected SourceCommit 'ccc333', got '%s'", loaded.SourceCommit)
+		}
+		if loaded.TargetCommit != "ddd444" {
+			t.Errorf("Expected TargetCommit 'ddd444', got '%s'", loaded.TargetCommit)
+		}
+		if loaded.Status != models.ReviewStatusDraft {
+			t.Errorf("Expected Status '%s', got '%s'", models.ReviewStatusDraft, loaded.Status)
+		}
+		if loaded.Comments == nil {
+			t.Errorf("Expected non-nil Comments slice, got nil")
+		}
+		if len(loaded.Comments) != 0 {
+			t.Errorf("Expected 0 comments, got %d", len(loaded.Comments))
+		}
+	})
+
+	t.Run("LoadReviewWithEmptyCommitsReturnsEmpty", func(t *testing.T) {
+		loaded, err := storage.LoadReview("/some/repo", "feat", "main", "", "")
+		if err != nil {
+			t.Fatalf("Expected no error for empty commits, got: %v", err)
+		}
+
+		if loaded.SourceCommit != "" {
+			t.Errorf("Expected empty SourceCommit, got '%s'", loaded.SourceCommit)
+		}
+		if loaded.TargetCommit != "" {
+			t.Errorf("Expected empty TargetCommit, got '%s'", loaded.TargetCommit)
+		}
+		if loaded.Status != models.ReviewStatusDraft {
+			t.Errorf("Expected Status '%s', got '%s'", models.ReviewStatusDraft, loaded.Status)
+		}
+	})
+
+	t.Run("SaveOverwritesExistingReview", func(t *testing.T) {
+		original := &models.Review{
+			RepoPath:     "/home/user/overwrite-repo",
+			SourceBranch: "feature",
+			TargetBranch: "main",
+			SourceCommit: "eee555",
+			TargetCommit: "fff666",
+			Status:       models.ReviewStatusDraft,
+			Comments: []models.ReviewComment{
+				{
+					ID:        "old-comment",
+					FilePath:  "old.go",
+					StartLine: 1,
+					EndLine:   1,
+					Side:      "right",
+					Body:      "Old comment",
+					Status:    models.CommentStatusOpen,
+					CreatedAt: "2025-01-01T00:00:00Z",
+				},
+			},
+		}
+
+		if err := storage.SaveReview(original, "/home/user/overwrite-repo"); err != nil {
+			t.Fatalf("Failed to save original review: %v", err)
+		}
+
+		updated := &models.Review{
+			RepoPath:     "/home/user/overwrite-repo",
+			SourceBranch: "feature",
+			TargetBranch: "main",
+			SourceCommit: "eee555",
+			TargetCommit: "fff666",
+			Status:       models.ReviewStatusSubmitted,
+			SubmittedAt:  "2025-06-16T12:00:00Z",
+			Comments: []models.ReviewComment{
+				{
+					ID:        "new-comment",
+					FilePath:  "new.go",
+					StartLine: 5,
+					EndLine:   10,
+					Side:      "both",
+					Body:      "Updated comment",
+					Status:    models.CommentStatusOpen,
+					CreatedAt: "2025-06-16T11:00:00Z",
+				},
+			},
+		}
+
+		if err := storage.SaveReview(updated, "/home/user/overwrite-repo"); err != nil {
+			t.Fatalf("Failed to save updated review: %v", err)
+		}
+
+		loaded, err := storage.LoadReview("/home/user/overwrite-repo", "feature", "main", "eee555", "fff666")
+		if err != nil {
+			t.Fatalf("Failed to load updated review: %v", err)
+		}
+
+		if loaded.Status != models.ReviewStatusSubmitted {
+			t.Errorf("Expected Status '%s', got '%s'", models.ReviewStatusSubmitted, loaded.Status)
+		}
+		if loaded.SubmittedAt != "2025-06-16T12:00:00Z" {
+			t.Errorf("Expected SubmittedAt '2025-06-16T12:00:00Z', got '%s'", loaded.SubmittedAt)
+		}
+		if len(loaded.Comments) != 1 {
+			t.Fatalf("Expected 1 comment after overwrite, got %d", len(loaded.Comments))
+		}
+		if loaded.Comments[0].ID != "new-comment" {
+			t.Errorf("Expected comment ID 'new-comment', got '%s'", loaded.Comments[0].ID)
+		}
+		if loaded.Comments[0].Body != "Updated comment" {
+			t.Errorf("Expected comment Body 'Updated comment', got '%s'", loaded.Comments[0].Body)
+		}
+	})
+
+	t.Run("SaveReviewMissingCommitHashes", func(t *testing.T) {
+		review := &models.Review{
+			RepoPath:     "/some/repo",
+			SourceBranch: "feature",
+			TargetBranch: "main",
+			// Missing SourceCommit and TargetCommit
+			Status:   models.ReviewStatusDraft,
+			Comments: []models.ReviewComment{},
+		}
+
+		err := storage.SaveReview(review, "/some/repo")
+		if err == nil {
+			t.Errorf("Expected error for missing commit hashes, got nil")
+		}
+	})
+}
+
+func TestReviewPath(t *testing.T) {
+	storage := &JSONStorage{
+		baseStoragePath: "/base/path",
+		reposPath:       "/base/path/repositories.json",
+	}
+
+	t.Run("ConsistentPathForSameInputs", func(t *testing.T) {
+		path1 := storage.reviewPath("/home/user/repo", "abc123", "def456")
+		path2 := storage.reviewPath("/home/user/repo", "abc123", "def456")
+
+		if path1 != path2 {
+			t.Errorf("Expected identical paths for same inputs, got '%s' and '%s'", path1, path2)
+		}
+	})
+
+	t.Run("DifferentInputsProduceDifferentPaths", func(t *testing.T) {
+		pathA := storage.reviewPath("/home/user/repoA", "abc123", "def456")
+		pathB := storage.reviewPath("/home/user/repoB", "abc123", "def456")
+
+		if pathA == pathB {
+			t.Errorf("Expected different paths for different repos, both got '%s'", pathA)
+		}
+
+		pathC := storage.reviewPath("/home/user/repo", "abc123", "def456")
+		pathD := storage.reviewPath("/home/user/repo", "xyz789", "def456")
+
+		if pathC == pathD {
+			t.Errorf("Expected different paths for different source commits, both got '%s'", pathC)
+		}
+
+		pathE := storage.reviewPath("/home/user/repo", "abc123", "def456")
+		pathF := storage.reviewPath("/home/user/repo", "abc123", "xyz789")
+
+		if pathE == pathF {
+			t.Errorf("Expected different paths for different target commits, both got '%s'", pathE)
+		}
+	})
+
+	t.Run("PathContainsReviewsSubdir", func(t *testing.T) {
+		path := storage.reviewPath("/home/user/repo", "abc123", "def456")
+
+		// reviewPath uses filepath.Join(s.baseStoragePath, "reviews", safeRepoPath, sourceCommit, targetCommit, "review.json")
+		if !filepath.IsAbs(path) {
+			t.Errorf("Expected absolute path, got '%s'", path)
+		}
+
+		// Verify the path ends with review.json
+		if filepath.Base(path) != "review.json" {
+			t.Errorf("Expected path to end with 'review.json', got '%s'", filepath.Base(path))
+		}
+	})
+
+	t.Run("PathIncludesCommitHashes", func(t *testing.T) {
+		path := storage.reviewPath("/home/user/repo", "sourceabc", "targetdef")
+
+		// The path should contain both commit hashes as directory components
+		dir := filepath.Dir(path)                     // .../sourceabc/targetdef
+		targetDir := filepath.Base(dir)               // targetdef
+		sourceDir := filepath.Base(filepath.Dir(dir)) // sourceabc
+
+		if sourceDir != "sourceabc" {
+			t.Errorf("Expected source commit 'sourceabc' in path, got '%s'", sourceDir)
+		}
+		if targetDir != "targetdef" {
+			t.Errorf("Expected target commit 'targetdef' in path, got '%s'", targetDir)
+		}
+	})
+}
+
+func TestNewEmptyReview(t *testing.T) {
+	t.Run("ReturnsReviewWithNonNilComments", func(t *testing.T) {
+		review := newEmptyReview("/repo", "feature", "main", "src123", "tgt456")
+
+		if review.Comments == nil {
+			t.Errorf("Expected non-nil Comments slice, got nil")
+		}
+		if len(review.Comments) != 0 {
+			t.Errorf("Expected 0 comments, got %d", len(review.Comments))
+		}
+	})
+
+	t.Run("PopulatesAllFields", func(t *testing.T) {
+		review := newEmptyReview("/my/repo", "feat-branch", "develop", "aaa", "bbb")
+
+		if review.RepoPath != "/my/repo" {
+			t.Errorf("Expected RepoPath '/my/repo', got '%s'", review.RepoPath)
+		}
+		if review.SourceBranch != "feat-branch" {
+			t.Errorf("Expected SourceBranch 'feat-branch', got '%s'", review.SourceBranch)
+		}
+		if review.TargetBranch != "develop" {
+			t.Errorf("Expected TargetBranch 'develop', got '%s'", review.TargetBranch)
+		}
+		if review.SourceCommit != "aaa" {
+			t.Errorf("Expected SourceCommit 'aaa', got '%s'", review.SourceCommit)
+		}
+		if review.TargetCommit != "bbb" {
+			t.Errorf("Expected TargetCommit 'bbb', got '%s'", review.TargetCommit)
+		}
+		if review.Status != models.ReviewStatusDraft {
+			t.Errorf("Expected Status '%s', got '%s'", models.ReviewStatusDraft, review.Status)
+		}
+	})
+}
+
+func TestEnsureDir(t *testing.T) {
+	t.Run("CreatesNestedDirectories", func(t *testing.T) {
+		tempDir := t.TempDir()
+		nestedFilePath := filepath.Join(tempDir, "a", "b", "c", "file.json")
+
+		if err := ensureDir(nestedFilePath); err != nil {
+			t.Fatalf("Failed to create nested directories: %v", err)
+		}
+
+		// Verify the parent directory was created (not the file itself)
+		parentDir := filepath.Dir(nestedFilePath)
+		info, err := os.Stat(parentDir)
+		if err != nil {
+			t.Fatalf("Parent directory does not exist: %v", err)
+		}
+		if !info.IsDir() {
+			t.Errorf("Expected a directory, got a file")
+		}
+
+		// Verify the file was NOT created (ensureDir only creates the directory)
+		if _, err := os.Stat(nestedFilePath); !os.IsNotExist(err) {
+			t.Errorf("Expected file to not exist, but it does (or unexpected error: %v)", err)
+		}
+	})
+
+	t.Run("ExistingDirectoryNoError", func(t *testing.T) {
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "file.json")
+
+		// tempDir already exists, so ensuring its parent should succeed
+		if err := ensureDir(filePath); err != nil {
+			t.Errorf("Expected no error for existing directory, got: %v", err)
+		}
+
+		// Call again to verify idempotency
+		if err := ensureDir(filePath); err != nil {
+			t.Errorf("Expected no error on second call, got: %v", err)
+		}
+	})
+
+	t.Run("ErrorOnInvalidPath", func(t *testing.T) {
+		// /dev/null is a file, not a directory — creating a subdirectory under it should fail
+		invalidPath := filepath.Join("/dev/null", "subdir", "file.json")
+
+		err := ensureDir(invalidPath)
+		if err == nil {
+			t.Errorf("Expected error for invalid path, got nil")
+		}
+	})
+}
+
+func TestSanitizeRepoPath(t *testing.T) {
+	t.Run("ReplacesPathSeparators", func(t *testing.T) {
+		result := sanitizeRepoPath("/home/user/repo")
+		if result == "/home/user/repo" {
+			t.Errorf("Expected path separators to be replaced, got '%s'", result)
+		}
+
+		// Should not contain OS path separator
+		if filepath.IsAbs(result) {
+			t.Errorf("Expected sanitized path to not be absolute, got '%s'", result)
+		}
+	})
+
+	t.Run("ReplacesColons", func(t *testing.T) {
+		result := sanitizeRepoPath("C:/Users/repo")
+		for _, c := range result {
+			if c == ':' {
+				t.Errorf("Expected colons to be replaced, got '%s'", result)
+				break
+			}
+		}
+	})
+
+	t.Run("ConsistentOutput", func(t *testing.T) {
+		result1 := sanitizeRepoPath("/home/user/repo")
+		result2 := sanitizeRepoPath("/home/user/repo")
+
+		if result1 != result2 {
+			t.Errorf("Expected consistent output, got '%s' and '%s'", result1, result2)
+		}
+	})
+}
+
 func TestNewJSONStorage(t *testing.T) {
 	// Create a temporary directory for testing
-	tempDir, err := os.MkdirTemp("", "diffty-test-home")
-	if err != nil {
-		t.Fatalf("Failed to create temporary directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	// Set temporary home directory
 	t.Setenv("HOME", tempDir)
