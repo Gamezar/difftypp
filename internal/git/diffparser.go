@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/darccio/diffty/internal/models"
+	"github.com/Gamezar/difftypp/internal/models"
 )
 
 // ParseDiff parses raw unified diff output into structured DiffFile slices.

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/darccio/diffty/internal/models"
+	"github.com/Gamezar/difftypp/internal/models"
 )
 
 // MockStorage is a mock implementation of the Storage interface for testing

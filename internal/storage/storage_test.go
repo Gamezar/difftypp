@@ -5,17 +5,17 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/darccio/diffty/internal/models"
+	"github.com/Gamezar/difftypp/internal/models"
 )
 
 func TestJSONStorage(t *testing.T) {
 	// Create a temporary directory for the test
 	tempDir := t.TempDir()
 
-	// Create a test .diffty directory
-	difftyDir := filepath.Join(tempDir, ".diffty")
+	// Create a test .difftypp directory
+	difftyDir := filepath.Join(tempDir, ".difftypp")
 	if err := os.MkdirAll(difftyDir, 0755); err != nil {
-		t.Fatalf("Failed to create .diffty directory: %v", err)
+		t.Fatalf("Failed to create .difftypp directory: %v", err)
 	}
 
 	// Create a test storage instance with a custom path
@@ -685,10 +685,10 @@ func TestNewJSONStorage(t *testing.T) {
 		t.Fatal("Storage should not be nil")
 	}
 
-	// Verify .diffty directory was created
-	difftyPath := filepath.Join(tempDir, ".diffty")
+	// Verify .difftypp directory was created
+	difftyPath := filepath.Join(tempDir, ".difftypp")
 	if _, err := os.Stat(difftyPath); os.IsNotExist(err) {
-		t.Errorf(".diffty directory was not created")
+		t.Errorf(".difftypp directory was not created")
 	}
 
 	// Verify repositories path

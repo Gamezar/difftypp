@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/darccio/diffty/internal/git"
-	"github.com/darccio/diffty/internal/models"
-	"github.com/darccio/diffty/internal/storage"
+	"github.com/Gamezar/difftypp/internal/git"
+	"github.com/Gamezar/difftypp/internal/models"
+	"github.com/Gamezar/difftypp/internal/storage"
 )
 
 //go:embed templates/*

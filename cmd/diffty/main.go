@@ -6,8 +6,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/darccio/diffty/internal/server"
-	"github.com/darccio/diffty/internal/storage"
+	"github.com/Gamezar/difftypp/internal/server"
+	"github.com/Gamezar/difftypp/internal/storage"
 )
 
 func main() {
@@ -29,7 +29,7 @@ func main() {
 
 	// Start server
 	addr := fmt.Sprintf(":%d", *port)
-	log.Printf("Starting diffty server at http://localhost%s", addr)
+	log.Printf("Starting diffty++ server at http://localhost%s", addr)
 
 	if err := http.ListenAndServe(addr, srv.Router()); err != nil {
 		log.Fatalf("Server error: %v", err)

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/darccio/diffty/internal/models"
+	"github.com/Gamezar/difftypp/internal/models"
 )
 
 // Storage interface defines methods for persisting and retrieving data
@@ -33,8 +33,8 @@ func NewJSONStorage() (*JSONStorage, error) {
 		return nil, fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	// Ensure .diffty directory exists
-	storageDir := filepath.Join(homeDir, ".diffty")
+	// Ensure .difftypp directory exists
+	storageDir := filepath.Join(homeDir, ".difftypp")
 	if err := os.MkdirAll(storageDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
