@@ -24,23 +24,23 @@
                 {{ if .SelectedFile }}
                 <div class="flex items-center">
                     <span class="mr-2">Mark as:</span>
-                    <form method="POST" action="/api/review-state?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&file={{urlquery .SelectedFile}}&status=approved&mode={{urlquery .DiffMode}}{{if .NextFilePath}}&next={{urlquery .NextFilePath}}{{end}}" class="inline mx-1 review-form">
-                        <button type="submit" class="px-3 py-1 bg-green-100 text-green-800 rounded hover:bg-green-200" title="Approve (a)">
-                            <span class="inline-flex items-center">Approve <span class="ml-1 key-hint">a</span></span>
+                    <form method="POST" action="/api/review-state?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&file={{urlquery .SelectedFile}}&status=approved&mode={{urlquery .DiffMode}}{{if .NextFilePath}}&next={{urlquery .NextFilePath}}{{end}}" class="inline mx-1 review-form" data-testid="review-form-approve">
+                        <button type="submit" class="px-3 py-1 bg-green-100 text-green-800 rounded hover:bg-green-200" title="Approve (a)" data-testid="btn-approve">
+                            <span class="inline-flex items-center">Approve <span class="ml-1 key-hint" aria-hidden="true">a</span></span>
                         </button>
                     </form>
-                    <form method="POST" action="/api/review-state?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&file={{urlquery .SelectedFile}}&status=rejected&mode={{urlquery .DiffMode}}{{if .NextFilePath}}&next={{urlquery .NextFilePath}}{{end}}" class="inline mx-1 review-form">
-                        <button type="submit" class="px-3 py-1 bg-red-100 text-red-800 rounded hover:bg-red-200" title="Reject (r)">
-                            <span class="inline-flex items-center">Reject <span class="ml-1 key-hint">r</span></span>
+                    <form method="POST" action="/api/review-state?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&file={{urlquery .SelectedFile}}&status=rejected&mode={{urlquery .DiffMode}}{{if .NextFilePath}}&next={{urlquery .NextFilePath}}{{end}}" class="inline mx-1 review-form" data-testid="review-form-reject">
+                        <button type="submit" class="px-3 py-1 bg-red-100 text-red-800 rounded hover:bg-red-200" title="Reject (r)" data-testid="btn-reject">
+                            <span class="inline-flex items-center">Reject <span class="ml-1 key-hint" aria-hidden="true">r</span></span>
                         </button>
                     </form>
-                    <form method="POST" action="/api/review-state?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&file={{urlquery .SelectedFile}}&status=skipped&mode={{urlquery .DiffMode}}{{if .NextFilePath}}&next={{urlquery .NextFilePath}}{{end}}" class="inline mx-1 review-form">
-                        <button type="submit" class="px-3 py-1 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200" title="Skip (s)">
-                            <span class="inline-flex items-center">Skip <span class="ml-1 key-hint">s</span></span>
+                    <form method="POST" action="/api/review-state?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&file={{urlquery .SelectedFile}}&status=skipped&mode={{urlquery .DiffMode}}{{if .NextFilePath}}&next={{urlquery .NextFilePath}}{{end}}" class="inline mx-1 review-form" data-testid="review-form-skip">
+                        <button type="submit" class="px-3 py-1 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200" title="Skip (s)" data-testid="btn-skip">
+                            <span class="inline-flex items-center">Skip <span class="ml-1 key-hint" aria-hidden="true">s</span></span>
                         </button>
                     </form>
                     {{ if .FileStatus }}
-                    <span class="ml-3 px-2 py-1 rounded-full text-sm
+                    <span role="status" aria-label="File status: {{.FileStatus}}" data-testid="file-status-badge" class="ml-3 px-2 py-1 rounded-full text-sm
                         {{ if eq .FileStatus "approved" }}bg-green-100 text-green-800{{ end }}
                         {{ if eq .FileStatus "rejected" }}bg-red-100 text-red-800{{ end }}
                         {{ if eq .FileStatus "skipped" }}bg-yellow-100 text-yellow-800{{ end }}
@@ -58,7 +58,7 @@
                 {{/* Submit Review button — shown when there are open comments */}}
                 {{ if .OpenCommentCount }}{{ if gt .OpenCommentCount 0 }}
                 <form method="POST" action="/api/review/submit?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&mode={{urlquery .DiffMode}}">
-                    <button type="submit" class="px-4 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 font-medium">
+                    <button type="submit" class="px-4 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 font-medium" data-testid="btn-submit-review">
                         Submit Review ({{ .OpenCommentCount }} comment{{ if gt .OpenCommentCount 1 }}s{{ end }})
                     </button>
                 </form>
@@ -79,16 +79,16 @@
         {{else}}
             {{if .SelectedFile}}
                 {{/* ===== SINGLE FILE DIFF VIEW (structured table) ===== */}}
-                <div id="diff-content" class="bg-white shadow rounded-lg overflow-hidden" tabindex="0">
+                <div id="diff-content" class="bg-white shadow rounded-lg overflow-hidden" tabindex="0" data-testid="diff-content">
                     <div class="flex justify-between items-center p-4 border-b">
                         <h3 class="font-mono text-lg font-medium">{{.SelectedFile}}</h3>
                         <div class="flex space-x-2">
-                            <button id="prev-file" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300" title="Previous file">
+                            <button id="prev-file" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300" title="Previous file" data-testid="btn-prev-file">
                                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
                                 </svg>
                             </button>
-                            <button id="next-file" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300" title="Next file">
+                            <button id="next-file" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300" title="Next file" data-testid="btn-next-file">
                                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                 </svg>
@@ -177,14 +177,15 @@
                                             {{/* Resolve / Re-open toggle */}}
                                             <form method="POST" action="/api/review/comment/resolve?repo={{urlquery $repoPath}}&source={{urlquery $sourceBranch}}&target={{urlquery $targetBranch}}&source_commit={{urlquery $sourceCommit}}&target_commit={{urlquery $targetCommit}}&comment_id={{urlquery .ID}}&file={{urlquery $filePath}}&mode={{urlquery $diffMode}}" class="inline">
                                                 <button type="submit" class="px-2 py-1 text-xs rounded
-                                                    {{ if eq .Status "resolved" }}bg-blue-100 text-blue-700 hover:bg-blue-200{{ else }}bg-green-100 text-green-700 hover:bg-green-200{{ end }}">
+                                                    {{ if eq .Status "resolved" }}bg-blue-100 text-blue-700 hover:bg-blue-200{{ else }}bg-green-100 text-green-700 hover:bg-green-200{{ end }}"
+                                                    data-testid="btn-comment-{{ if eq .Status "resolved" }}reopen{{ else }}resolve{{ end }}-{{.ID}}">
                                                     {{ if eq .Status "resolved" }}Re-open{{ else }}Resolve{{ end }}
                                                 </button>
                                             </form>
                                             {{/* Delete */}}
                                             <form method="POST" action="/api/review/comment?repo={{urlquery $repoPath}}&source={{urlquery $sourceBranch}}&target={{urlquery $targetBranch}}&source_commit={{urlquery $sourceCommit}}&target_commit={{urlquery $targetCommit}}&comment_id={{urlquery .ID}}&file={{urlquery $filePath}}&mode={{urlquery $diffMode}}" class="inline delete-comment-form">
                                                 <input type="hidden" name="_method" value="DELETE">
-                                                <button type="submit" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200">Delete</button>
+                                                <button type="submit" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200" data-testid="btn-comment-delete-{{.ID}}">Delete</button>
                                             </form>
                                         </div>
                                     </div>
@@ -211,10 +212,10 @@
                             <input type="hidden" name="start_line" id="cf-start-line">
                             <input type="hidden" name="end_line" id="cf-end-line">
                             <input type="hidden" name="side" id="cf-side">
-                            <textarea name="body" id="cf-body" rows="4" class="w-full border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Leave a comment..."></textarea>
+                            <textarea name="body" id="cf-body" rows="4" class="w-full border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Leave a comment..." data-testid="comment-textarea"></textarea>
                             <div class="flex justify-end gap-2 mt-2">
-                                <button type="button" id="cf-cancel" class="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300">Cancel</button>
-                                <button type="submit" class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700">Add Comment</button>
+                                <button type="button" id="cf-cancel" class="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300" data-testid="btn-comment-cancel">Cancel</button>
+                                <button type="submit" class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700" data-testid="btn-comment-submit">Add Comment</button>
                             </div>
                         </form>
                     </div>
@@ -226,7 +227,7 @@
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="font-semibold">Files Changed <span id="files-count" class="text-sm text-gray-500 ml-2"></span></h3>
                         <div class="relative">
-                            <select id="status-filter" class="block appearance-none bg-white border border-gray-300 hover:border-gray-400 px-4 py-2 pr-8 rounded shadow leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <select id="status-filter" data-testid="status-filter" class="block appearance-none bg-white border border-gray-300 hover:border-gray-400 px-4 py-2 pr-8 rounded shadow leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500">
                                 <option value="all">All files</option>
                                 <option value="unreviewed">Unreviewed</option>
                                 <option value="approved">Approved</option>
@@ -239,22 +240,23 @@
                         </div>
                     </div>
                     {{if .Files}}
-                        <ul id="files-list" class="divide-y divide-gray-200" tabindex="0">
+                        <ul id="files-list" class="divide-y divide-gray-200" tabindex="0" data-testid="files-list">
                             {{range .Files}}
-                            <li class="py-2 hover:bg-gray-50" data-path="{{.Path}}" data-status="{{.Status}}">
+                            <li class="py-2 hover:bg-gray-50" data-path="{{.Path}}" data-status="{{.Status}}" data-testid="file-item-{{.Path}}">
                                 <div class="flex justify-between items-center">
                                     <div class="flex items-center">
                                         <span class="font-mono text-sm">{{.Path}}</span>
                                         {{if eq .Status "approved"}}
-                                            <span class="ml-2 px-2 py-0.5 bg-green-100 text-green-800 text-xs rounded-full">Approved</span>
+                                            <span role="status" aria-label="File status: approved" data-testid="badge-approved" class="ml-2 px-2 py-0.5 bg-green-100 text-green-800 text-xs rounded-full">Approved</span>
                                         {{else if eq .Status "rejected"}}
-                                            <span class="ml-2 px-2 py-0.5 bg-red-100 text-red-800 text-xs rounded-full">Rejected</span>
+                                            <span role="status" aria-label="File status: rejected" data-testid="badge-rejected" class="ml-2 px-2 py-0.5 bg-red-100 text-red-800 text-xs rounded-full">Rejected</span>
                                         {{else if eq .Status "skipped"}}
-                                            <span class="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs rounded-full">Skipped</span>
+                                            <span role="status" aria-label="File status: skipped" data-testid="badge-skipped" class="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs rounded-full">Skipped</span>
                                         {{end}}
                                     </div>
                                     <a href="/diff?repo={{urlquery $.RepoPath}}&source={{urlquery $.SourceBranch}}&target={{urlquery $.TargetBranch}}&source_commit={{urlquery $.SourceCommit}}&target_commit={{urlquery $.TargetCommit}}&mode={{urlquery $.DiffMode}}&file={{urlquery .Path}}" 
-                                    class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300">
+                                    class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
+                                    data-testid="view-file-{{.Path}}">
                                         View
                                     </a>
                                 </div>
