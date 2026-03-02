@@ -44,6 +44,20 @@ go vet ./...
 
 There is no Makefile, no CI pipeline, and no linter config. Use `gofmt` and `go vet` as baseline checks.
 
+## Denied Bash Commands
+
+Piped usage of denied commands (`cat`, `head`, `tail`, `grep`, `rg`) is also blocked — OpenCode checks each pipeline segment independently, so `go test ./... | tail -5` is denied even though `go test*` is allowed.
+
+To get specific sections of long command output without wasting context, redirect to a file and use `Read` with `offset`/`limit`:
+
+```bash
+# Step 1: redirect output to a temp file (matches "go test*" — allowed)
+go test -v ./... > test_logs/test-output.log 2>&1
+
+# Step 2: read just the last N lines with the Read tool
+# Read test_logs/test-output.log with offset near end, limit 10
+```
+
 ## Project Structure
 
 ```
