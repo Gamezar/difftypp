@@ -31,5 +31,4 @@ Thumbs.db
 # Codemap
 .codemap/
 
-# Serena
-.serena/
+# Serena - internal .serena/.gitignore manages what to track
