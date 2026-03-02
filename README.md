@@ -4,6 +4,13 @@ diffty++ is a web-based tool designed to streamline code review processes by pro
 
 diffty++ is a fork of [diffty](https://github.com/darccio/diffty).
 
+## Differences from diffty
+
+diffty++ extends the original diffty with the following additions:
+
+- **Multi-mode diff comparison**: Compare branches, arbitrary commits, staged changes, or unstaged working tree modifications via a tabbed UI.
+- **Inline review comments**: GitHub PR-style inline comments with line selection, comment resolution, markdown export, and review submission flow.
+
 ## Features
 
 - **Enhanced Diff Visualization**: Side-by-side and unified diff views with syntax highlighting
