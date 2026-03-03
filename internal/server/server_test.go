@@ -1779,13 +1779,16 @@ index 1234..5678 100644
 
 		md := generateMarkdownExport(review, rawDiff)
 
-		// Should contain a code block with context around line 2
+		// Should contain a code block with exactly the selected line (line 2)
 		if !strings.Contains(md, "```") {
 			t.Errorf("Expected code block in markdown, got: %s", md)
 		}
-		// The code context should include some lines around line 2
-		if !strings.Contains(md, "line1") || !strings.Contains(md, "line2") {
-			t.Errorf("Expected code context to include lines near line 2, got: %s", md)
+		if !strings.Contains(md, "line2") {
+			t.Errorf("Expected code context to include selected line 2, got: %s", md)
+		}
+		// Must NOT include neighboring lines the user did not select
+		if strings.Contains(md, "line1\n") || strings.Contains(md, "line4") {
+			t.Errorf("Code context should only contain selected lines, not neighbors, got: %s", md)
 		}
 	})
 
@@ -1821,7 +1824,7 @@ index 1234..5678 100644
 
 // TestGetCodeContext tests the code context extraction helper
 func TestGetCodeContext(t *testing.T) {
-	t.Run("returns context lines around target range", func(t *testing.T) {
+	t.Run("returns exact lines matching target range", func(t *testing.T) {
 		fileMap := map[string]models.DiffFile{
 			"test.go": {
 				Path: "test.go",
@@ -1841,19 +1844,12 @@ func TestGetCodeContext(t *testing.T) {
 		}
 
 		lines := getCodeContext(fileMap, "test.go", 3, 3, "right")
-		if len(lines) == 0 {
-			t.Fatal("Expected non-empty context lines")
+		// Should include only the exact line at right=3, not surrounding lines
+		if len(lines) != 1 {
+			t.Fatalf("Expected exactly 1 line for single-line selection, got %d: %v", len(lines), lines)
 		}
-		// Should include lines in range [3-2, 3+2] = [1..5]
-		// (line 6 at right=6 is outside range)
-		foundLine3 := false
-		for _, l := range lines {
-			if l == "line3" {
-				foundLine3 = true
-			}
-		}
-		if !foundLine3 {
-			t.Errorf("Expected to find 'line3' (stripped prefix) in context, got: %v", lines)
+		if lines[0] != "line3" {
+			t.Errorf("Expected 'line3' (stripped prefix), got: %q", lines[0])
 		}
 	})
 

@@ -1463,7 +1463,7 @@ func generateMarkdownExport(review *models.Review, rawDiff string) string {
 	return buf.String()
 }
 
-// getCodeContext extracts 3-5 lines of surrounding code context from the parsed diff.
+// getCodeContext extracts the exact lines matching [startLine, endLine] from the parsed diff.
 // side controls which line numbers to match: "left" uses left-side (deleted lines),
 // "right" uses right-side (added lines), and any other value (including "both") checks both sides.
 func getCodeContext(fileMap map[string]models.DiffFile, filePath string, startLine, endLine int, side string) []string {
@@ -1489,12 +1489,12 @@ func getCodeContext(fileMap map[string]models.DiffFile, filePath string, startLi
 			var match bool
 			switch side {
 			case "left":
-				match = leftLine > 0 && leftLine >= startLine-2 && leftLine <= endLine+2
+				match = leftLine > 0 && leftLine >= startLine && leftLine <= endLine
 			case "right":
-				match = rightLine > 0 && rightLine >= startLine-2 && rightLine <= endLine+2
+				match = rightLine > 0 && rightLine >= startLine && rightLine <= endLine
 			default: // "both" or unspecified — check either side
-				match = (rightLine > 0 && rightLine >= startLine-2 && rightLine <= endLine+2) ||
-					(leftLine > 0 && leftLine >= startLine-2 && leftLine <= endLine+2)
+				match = (rightLine > 0 && rightLine >= startLine && rightLine <= endLine) ||
+					(leftLine > 0 && leftLine >= startLine && leftLine <= endLine)
 			}
 
 			if match {
