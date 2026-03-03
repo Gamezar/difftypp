@@ -397,8 +397,8 @@ func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 
 			redirectURL := fmt.Sprintf("/diff?repo=%s&source=%s&target=%s&source_commit=%s&target_commit=%s&mode=%s",
 				url.QueryEscape(repoPath),
-				url.QueryEscape(sourceBranch),
-				url.QueryEscape(targetBranch),
+				url.QueryEscape(sourceCommit),
+				url.QueryEscape(targetCommit),
 				url.QueryEscape(sourceCommit),
 				url.QueryEscape(targetCommit),
 				url.QueryEscape(mode))

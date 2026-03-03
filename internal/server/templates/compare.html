@@ -111,16 +111,83 @@
         
         {{if .RecentCommits}}
         <div class="mt-6 border-t pt-4">
-            <h4 class="text-sm font-medium text-gray-700 mb-3">Recent Commits</h4>
-            <ul class="space-y-1 max-h-64 overflow-y-auto">
+            <div class="flex items-center justify-between mb-3">
+                <h4 class="text-sm font-medium text-gray-700">Recent Commits</h4>
+                <p class="text-xs text-gray-400" id="commits-hint">Click commits to select target and source refs</p>
+            </div>
+            <ul id="commits-list" class="space-y-1 max-h-64 overflow-y-auto" data-testid="commits-list">
                 {{range .RecentCommits}}
-                <li class="flex items-start gap-2 py-1 text-sm">
-                    <code class="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono text-gray-600 shrink-0 cursor-pointer select-all" title="Click to select">{{shortHash .Hash}}</code>
-                    <span class="text-gray-700 truncate">{{.Subject}}</span>
+                <li data-hash="{{.Hash}}"
+                    data-testid="commit-row"
+                    class="flex items-center gap-2 py-1.5 px-2 text-sm rounded cursor-pointer hover:bg-gray-50 transition-colors">
+                    <code class="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono text-gray-600 shrink-0 pointer-events-none">{{shortHash .Hash}}</code>
+                    <span class="text-gray-700 truncate flex-1 pointer-events-none">{{.Subject}}</span>
                 </li>
                 {{end}}
             </ul>
         </div>
+
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+          var targetInput = document.getElementById('target')
+          var sourceInput = document.getElementById('source')
+          var commitsList = document.getElementById('commits-list')
+          if (!commitsList) return
+
+          var selection = { target: null, source: null }
+          var rows = commitsList.querySelectorAll('li[data-hash]')
+
+          var BASE = 'flex items-center gap-2 py-1.5 px-2 text-sm rounded cursor-pointer transition-colors'
+
+          function updateRow(row) {
+            var hash = row.getAttribute('data-hash')
+            var badge = row.querySelector('.commit-badge')
+            if (badge) badge.remove()
+
+            if (hash === selection.target) {
+              row.className = BASE + ' bg-blue-50 border-l-2 border-blue-400'
+              var el = document.createElement('span')
+              el.className = 'commit-badge text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium shrink-0'
+              el.textContent = 'Target'
+              row.appendChild(el)
+            } else if (hash === selection.source) {
+              row.className = BASE + ' bg-green-50 border-l-2 border-green-400'
+              var el = document.createElement('span')
+              el.className = 'commit-badge text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium shrink-0'
+              el.textContent = 'Source'
+              row.appendChild(el)
+            } else {
+              row.className = BASE + ' hover:bg-gray-50'
+            }
+          }
+
+          function updateAll() {
+            rows.forEach(updateRow)
+            if (selection.target !== null) targetInput.value = selection.target
+            if (selection.source !== null) sourceInput.value = selection.source
+          }
+
+          rows.forEach(function(row) {
+            row.addEventListener('click', function() {
+              var hash = row.getAttribute('data-hash')
+
+              if (hash === selection.target) {
+                selection.target = ''
+              } else if (hash === selection.source) {
+                selection.source = ''
+              } else if (!selection.target) {
+                selection.target = hash
+              } else if (!selection.source) {
+                selection.source = hash
+              } else {
+                return
+              }
+
+              updateAll()
+            })
+          })
+        })
+        </script>
         {{end}}
     </div>
 

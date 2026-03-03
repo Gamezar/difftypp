@@ -185,6 +185,16 @@ func (r *Repository) GetDiff(sourceBranch, targetBranch string) (string, error) 
 - Git 2.30+ must be installed and available in `$PATH`.
 - The application stores data at `$HOME/.diffty/`.
 
+## Code Style Rules
+
+### Code Formatting (TypeScript/JavaScript)
+
+- No semicolons (enforced)
+- Single quotes (enforced)
+- No unnecessary curly braces (enforced)
+- 2-space indentation
+- Import order: external → internal → types
+
 ### Use Context7 MCP for Loading Documentation
 
 Context7 MCP is available to fetch up-to-date documentation with code examples.

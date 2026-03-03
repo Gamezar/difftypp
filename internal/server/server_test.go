@@ -755,11 +755,12 @@ func TestHandleComparePostCommitsMode(t *testing.T) {
 	if !strings.Contains(location, mainHash) {
 		t.Errorf("Expected main commit hash %s in location, got: %s", mainHash, location)
 	}
-	if !strings.Contains(location, "source=feature") {
-		t.Errorf("Expected source=feature in location, got: %s", location)
+	// source and target params now use resolved full hashes (not original form values)
+	if !strings.Contains(location, "source="+featureHash) {
+		t.Errorf("Expected source=%s in location, got: %s", featureHash, location)
 	}
-	if !strings.Contains(location, "target=main") {
-		t.Errorf("Expected target=main in location, got: %s", location)
+	if !strings.Contains(location, "target="+mainHash) {
+		t.Errorf("Expected target=%s in location, got: %s", mainHash, location)
 	}
 }
 
@@ -931,6 +932,229 @@ func TestHandleCompareGetCommitsMode(t *testing.T) {
 	expectedRepoName := filepath.Base(tempDir)
 	if !strings.Contains(bodyStr, "RepoName="+expectedRepoName) {
 		t.Errorf("Expected body to contain 'RepoName=%s', got: %s", expectedRepoName, bodyStr)
+	}
+}
+
+// setupRealTemplateTestServer creates a real git repo with multiple commits and
+// a Server that uses the actual embedded templates (no mock overrides). This is
+// needed to verify the real HTML structure rendered by templates.
+func setupRealTemplateTestServer(t *testing.T) (*Server, *MockStorage, string) {
+	t.Helper()
+
+	// 1. Create temp directory
+	tempDir, err := os.MkdirTemp("", "diffty-template-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %v", err)
+	}
+
+	// Helper to run git commands — fatals on error
+	runGit := func(args ...string) string {
+		t.Helper()
+		fullArgs := append([]string{"-C", tempDir}, args...)
+		cmd := exec.Command("git", fullArgs...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\noutput: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	// 2. git init + configure
+	runGit("init")
+	runGit("config", "--local", "commit.gpgsign", "false")
+	runGit("config", "--local", "user.email", "test@diffty.test")
+	runGit("config", "--local", "user.name", "Test User")
+
+	// 3. First commit
+	testFile := filepath.Join(tempDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("first"), 0644); err != nil {
+		t.Fatalf("Failed to write test.txt: %v", err)
+	}
+	runGit("add", "test.txt")
+	runGit("commit", "-m", "First commit")
+	runGit("branch", "-M", "main")
+
+	// 4. Second commit (so we have at least two for selection testing)
+	if err := os.WriteFile(testFile, []byte("first\nsecond"), 0644); err != nil {
+		t.Fatalf("Failed to modify test.txt: %v", err)
+	}
+	runGit("add", "test.txt")
+	runGit("commit", "-m", "Second commit")
+
+	// 5. Create feature branch (so branches mode has > 1 branch)
+	runGit("checkout", "-b", "feature")
+	if err := os.WriteFile(testFile, []byte("first\nsecond\nthird"), 0644); err != nil {
+		t.Fatalf("Failed to modify test.txt: %v", err)
+	}
+	runGit("add", "test.txt")
+	runGit("commit", "-m", "Feature work")
+
+	// 6. Switch back to main
+	runGit("checkout", "main")
+
+	// 7. Do NOT override getTemplateDir — use real embedded templates
+	mockStorage := &MockStorage{
+		repositories: []string{tempDir},
+	}
+
+	server, err := New(mockStorage)
+	if err != nil {
+		os.RemoveAll(tempDir)
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	t.Cleanup(func() {
+		os.RemoveAll(tempDir)
+	})
+
+	return server, mockStorage, tempDir
+}
+
+// TestCompareCommitsRendersInteractiveList verifies that the real compare.html
+// template in commits mode renders the interactive commit selection list with
+// all required data attributes, IDs, and the click-to-select script block.
+func TestCompareCommitsRendersInteractiveList(t *testing.T) {
+	srv, _, tempDir := setupRealTemplateTestServer(t)
+
+	reqURL := fmt.Sprintf("/compare?repo=%s&mode=commits", url.QueryEscape(tempDir))
+	req := httptest.NewRequest("GET", reqURL, nil)
+	w := httptest.NewRecorder()
+
+	srv.handleCompare(w, req)
+
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+	bodyStr := string(body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d; body: %s", resp.StatusCode, bodyStr)
+	}
+
+	// Verify commits-list container with correct ID and data-testid
+	checks := []struct {
+		name    string
+		content string
+	}{
+		{"commits-list ID", `id="commits-list"`},
+		{"commits-list data-testid", `data-testid="commits-list"`},
+		{"commit-row data-testid", `data-testid="commit-row"`},
+		{"data-hash attribute", `data-hash="`},
+		{"instruction text", "Click commits to select target and source refs"},
+		{"DOMContentLoaded script", "DOMContentLoaded"},
+		{"selection state object", "target: null, source: null"},
+		{"target input ID", `id="target"`},
+		{"source input ID", `id="source"`},
+		{"pointer-events-none on children", "pointer-events-none"},
+		{"commit-badge class in script", "commit-badge"},
+		{"commits-hint ID", `id="commits-hint"`},
+		{"compare-form-commits testid", `data-testid="compare-form-commits"`},
+		{"First commit subject", "First commit"},
+		{"Second commit subject", "Second commit"},
+	}
+
+	for _, c := range checks {
+		t.Run(c.name, func(t *testing.T) {
+			if !strings.Contains(bodyStr, c.content) {
+				t.Errorf("Expected body to contain %q for %s", c.content, c.name)
+			}
+		})
+	}
+
+	// Verify data-hash values are full 40-character SHA hashes
+	// Find all data-hash="..." occurrences
+	hashPrefix := `data-hash="`
+	idx := 0
+	hashCount := 0
+	for {
+		pos := strings.Index(bodyStr[idx:], hashPrefix)
+		if pos == -1 {
+			break
+		}
+		start := idx + pos + len(hashPrefix)
+		end := strings.Index(bodyStr[start:], `"`)
+		if end == -1 {
+			break
+		}
+		hash := bodyStr[start : start+end]
+		hashCount++
+		if len(hash) != 40 {
+			t.Errorf("Expected data-hash to be 40 chars (full SHA), got %d chars: %q", len(hash), hash)
+		}
+		// Verify it looks like a hex hash
+		for _, c := range hash {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+				t.Errorf("data-hash contains non-hex character %q in %q", string(c), hash)
+				break
+			}
+		}
+		idx = start + end
+	}
+
+	// We made 2 commits on main, so we expect at least 2 data-hash attributes
+	if hashCount < 2 {
+		t.Errorf("Expected at least 2 data-hash attributes, found %d", hashCount)
+	}
+
+	// Verify the script block contains the expected selection logic patterns
+	scriptChecks := []string{
+		"selection.target",
+		"selection.source",
+		"updateAll",
+		"updateRow",
+		"targetInput.value",
+		"sourceInput.value",
+	}
+	for _, sc := range scriptChecks {
+		if !strings.Contains(bodyStr, sc) {
+			t.Errorf("Expected script to contain %q", sc)
+		}
+	}
+}
+
+// TestCompareBranchesModeNoCommitsList verifies that branches mode does NOT
+// render the interactive commit list, data-hash attributes, or script block.
+func TestCompareBranchesModeNoCommitsList(t *testing.T) {
+	srv, _, tempDir := setupRealTemplateTestServer(t)
+
+	reqURL := fmt.Sprintf("/compare?repo=%s&mode=branches", url.QueryEscape(tempDir))
+	req := httptest.NewRequest("GET", reqURL, nil)
+	w := httptest.NewRecorder()
+
+	srv.handleCompare(w, req)
+
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+	bodyStr := string(body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d; body: %s", resp.StatusCode, bodyStr)
+	}
+
+	// Verify branches mode renders its own form
+	if !strings.Contains(bodyStr, `data-testid="compare-form-branches"`) {
+		t.Errorf("Expected branches form to be present")
+	}
+
+	// Verify commits-mode elements are NOT present
+	absent := []struct {
+		name    string
+		content string
+	}{
+		{"commits-list ID", `id="commits-list"`},
+		{"commits-list data-testid", `data-testid="commits-list"`},
+		{"commit-row data-testid", `data-testid="commit-row"`},
+		{"data-hash attribute", `data-hash="`},
+		{"DOMContentLoaded script", "DOMContentLoaded"},
+		{"selection state", "target: null, source: null"},
+		{"compare-form-commits testid", `data-testid="compare-form-commits"`},
+	}
+
+	for _, a := range absent {
+		t.Run(a.name, func(t *testing.T) {
+			if strings.Contains(bodyStr, a.content) {
+				t.Errorf("Expected body NOT to contain %q in branches mode (%s)", a.content, a.name)
+			}
+		})
 	}
 }
 
