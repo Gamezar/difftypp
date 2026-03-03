@@ -10,11 +10,13 @@ diffty++ extends the original diffty with the following additions:
 
 - **Multi-mode diff comparison**: Compare branches, arbitrary commits, staged changes, or unstaged working tree modifications via a tabbed UI.
 - **Inline review comments**: GitHub PR-style inline comments with line selection, comment resolution, markdown export, and review submission flow.
+- **File explorer**: Browse the filesystem to select repositories through a modal dialog with breadcrumb navigation, git repository detection, and directory filtering.
 
 ## Features
 
 - **Enhanced Diff Visualization**: Side-by-side and unified diff views with syntax highlighting
 - **Multi-Repository Support**: Select and switch between multiple repositories through the UI
+- **File Explorer**: Browse the filesystem visually to find and select repositories instead of typing paths
 - **Review Workflow**: Mark files as approved, rejected, or skipped
 - **Keyboard-Centric Navigation**: Efficient keyboard shortcuts for all operations
 - **Review State Persistence**: Save and resume reviews across sessions
@@ -72,8 +74,8 @@ difftypp --port 10101
 
 Then open http://localhost:10101 in your web browser. From there, you can:
 
-1. Add repositories through the UI
-2. Select repositories to review
+1. Browse for a repository or type its path, then add it
+2. Select a repository to review
 3. Choose branches to compare, or view staged/unstaged changes
 4. Review changes file by file
 
@@ -93,6 +95,10 @@ Then open http://localhost:10101 in your web browser. From there, you can:
 ## How It Works
 
 diffty++ uses Git command-line tools to generate diffs and presents them in a web interface. You can add and select repositories through the UI, then compare branches, view commit diffs, or inspect staged/unstaged changes. Review state is persisted per repository in JSON files at `$HOME/.difftypp/`.
+
+### File Explorer
+
+Click **Browse** next to the repository path input to open the file explorer. The explorer lists directories starting from your home folder. Git repositories appear first, marked with a badge. Click any directory to navigate into it, use the breadcrumb bar to jump back, or press Escape to close. Click **Select** to fill the path input with the current directory.
 
 ## Testing
 

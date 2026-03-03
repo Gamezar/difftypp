@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -31,7 +33,7 @@ var getTemplateDir = func() fs.FS {
 	return templateDir
 }
 
-//go:embed static
+//go:embed all:static
 var staticDir embed.FS
 
 // Server represents the HTTP server
@@ -174,11 +176,13 @@ func (s *Server) GetRepositories() (map[string]*git.Repository, error) {
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
 
-	// Static files — wrap with MIME type fixer for embedded assets
+	// Static files — serve directly from the embed.FS which contains "static/..."
+	// The URL path /static/css/main.css maps directly to static/css/main.css in the FS.
 	fileServer := http.FileServer(http.FS(staticDir))
-	mux.Handle("GET /static/", http.StripPrefix("/static/", mimeFixHandler(fileServer)))
+	mux.Handle("GET /static/", mimeFixHandler(fileServer))
 
 	// API routes
+	mux.HandleFunc("GET /api/browse", s.handleBrowse)
 	mux.HandleFunc("POST /api/repository/add", s.handleAddRepository)
 	mux.HandleFunc("POST /api/review-state", s.handleReviewState)
 	mux.HandleFunc("POST /api/review/comment", s.handleAddComment)
@@ -202,14 +206,43 @@ func (s *Server) Router() http.Handler {
 func mimeFixHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ext := filepath.Ext(r.URL.Path)
+		var forceMIME string
 		switch ext {
 		case ".css":
-			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+			forceMIME = "text/css; charset=utf-8"
 		case ".js":
-			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+			forceMIME = "application/javascript; charset=utf-8"
 		}
-		next.ServeHTTP(w, r)
+		if forceMIME != "" {
+			next.ServeHTTP(&mimeOverrideWriter{ResponseWriter: w, contentType: forceMIME}, r)
+		} else {
+			next.ServeHTTP(w, r)
+		}
 	})
+}
+
+// mimeOverrideWriter wraps http.ResponseWriter to force a specific Content-Type,
+// preventing http.FileServer from overwriting it with an incorrect type.
+type mimeOverrideWriter struct {
+	http.ResponseWriter
+	contentType string
+	wroteHeader bool
+}
+
+func (m *mimeOverrideWriter) WriteHeader(code int) {
+	if !m.wroteHeader {
+		m.ResponseWriter.Header().Set("Content-Type", m.contentType)
+		m.wroteHeader = true
+	}
+	m.ResponseWriter.WriteHeader(code)
+}
+
+func (m *mimeOverrideWriter) Write(b []byte) (int, error) {
+	if !m.wroteHeader {
+		m.ResponseWriter.Header().Set("Content-Type", m.contentType)
+		m.wroteHeader = true
+	}
+	return m.ResponseWriter.Write(b)
 }
 
 // handleIndex renders the index page
@@ -489,6 +522,108 @@ func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "compare.html", data)
+}
+
+// browseEntry represents a single directory entry returned by the browse API
+type browseEntry struct {
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	IsGitRepo bool   `json:"is_git_repo"`
+}
+
+// writeJSONError writes a JSON error response with the given message and status code.
+func writeJSONError(w http.ResponseWriter, message string, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	resp := struct {
+		Error string `json:"error"`
+	}{Error: message}
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("writeJSONError: failed to encode error response: %v", err)
+	}
+}
+
+// handleBrowse handles GET /api/browse — lists directories at a given path
+func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
+	dirPath := r.URL.Query().Get("path")
+	if dirPath == "" {
+		// Default to the user's home directory
+		home, err := os.UserHomeDir()
+		if err != nil {
+			writeJSONError(w, "failed to determine home directory", http.StatusInternalServerError)
+			return
+		}
+		dirPath = home
+	}
+
+	// Resolve to absolute path
+	absPath, err := filepath.Abs(dirPath)
+	if err != nil {
+		writeJSONError(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// Verify the path exists and is a directory
+	info, err := os.Stat(absPath)
+	if err != nil {
+		writeJSONError(w, "path not found", http.StatusNotFound)
+		return
+	}
+	if !info.IsDir() {
+		writeJSONError(w, "path is not a directory", http.StatusBadRequest)
+		return
+	}
+
+	// Read directory entries
+	entries, err := os.ReadDir(absPath)
+	if err != nil {
+		writeJSONError(w, "cannot read directory", http.StatusForbidden)
+		return
+	}
+
+	// Build response — only include directories (we're selecting a repo root)
+	dirs := []browseEntry{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		// Skip hidden directories (starting with .)
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		fullPath := filepath.Join(absPath, entry.Name())
+		dirs = append(dirs, browseEntry{
+			Name:      entry.Name(),
+			Path:      fullPath,
+			IsGitRepo: git.IsValidRepo(fullPath),
+		})
+	}
+
+	// Sort: git repos first, then alphabetically
+	sort.Slice(dirs, func(i, j int) bool {
+		if dirs[i].IsGitRepo != dirs[j].IsGitRepo {
+			return dirs[i].IsGitRepo
+		}
+		return dirs[i].Name < dirs[j].Name
+	})
+
+	// Build JSON response with current path for breadcrumb support
+	resp := struct {
+		CurrentPath string        `json:"current_path"`
+		ParentPath  string        `json:"parent_path"`
+		IsGitRepo   bool          `json:"is_git_repo"`
+		Entries     []browseEntry `json:"entries"`
+	}{
+		CurrentPath: absPath,
+		ParentPath:  filepath.Dir(absPath),
+		IsGitRepo:   git.IsValidRepo(absPath),
+		Entries:     dirs,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("handleBrowse: failed to encode JSON response: %v", err)
+	}
 }
 
 // handleAddRepository adds a new repository

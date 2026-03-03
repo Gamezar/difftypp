@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -2819,4 +2821,324 @@ func TestHandleReviewStateEdgeCases(t *testing.T) {
 			t.Errorf("Expected status %d, got %d; body: %s", http.StatusBadRequest, resp.StatusCode, body)
 		}
 	})
+}
+
+// browseResponse mirrors the anonymous response struct in handleBrowse.
+// Kept in sync manually — update if the handler response shape changes.
+type browseResponse struct {
+	CurrentPath string        `json:"current_path"`
+	ParentPath  string        `json:"parent_path"`
+	IsGitRepo   bool          `json:"is_git_repo"`
+	Entries     []browseEntry `json:"entries"`
+}
+
+// browseRequest is a test helper that sends a GET /api/browse request and returns the parsed response.
+func browseRequest(t *testing.T, s *Server, path string) browseResponse {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/browse?path="+url.QueryEscape(path), nil)
+	rr := httptest.NewRecorder()
+	s.handleBrowse(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("browseRequest(%q): expected status 200, got %d: %s", path, rr.Code, rr.Body.String())
+	}
+	var resp browseResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("browseRequest(%q): failed to decode JSON: %v", path, err)
+	}
+	return resp
+}
+
+// mkdirOrFail creates a directory tree, failing the test if it cannot.
+func mkdirOrFail(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0755); err != nil {
+		t.Fatalf("mkdirOrFail(%q): %v", path, err)
+	}
+}
+
+// TestHandleBrowseJSONStructure tests the browse endpoint with proper JSON deserialization
+func TestHandleBrowseJSONStructure(t *testing.T) {
+	t.Run("response deserializes to expected structure", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		tmpDir := t.TempDir()
+		mkdirOrFail(t, filepath.Join(tmpDir, "plain-dir"))
+		repoDir := filepath.Join(tmpDir, "my-repo")
+		mkdirOrFail(t, filepath.Join(repoDir, ".git"))
+
+		parsed := browseRequest(t, server, tmpDir)
+
+		if parsed.CurrentPath != tmpDir {
+			t.Errorf("Expected current_path=%q, got %q", tmpDir, parsed.CurrentPath)
+		}
+		if parsed.ParentPath != filepath.Dir(tmpDir) {
+			t.Errorf("Expected parent_path=%q, got %q", filepath.Dir(tmpDir), parsed.ParentPath)
+		}
+		if parsed.IsGitRepo {
+			t.Error("Expected is_git_repo=false for tmp dir, got true")
+		}
+		if len(parsed.Entries) != 2 {
+			t.Fatalf("Expected 2 entries, got %d", len(parsed.Entries))
+		}
+
+		// Git repo should be first (sorted first)
+		if parsed.Entries[0].Name != "my-repo" {
+			t.Errorf("Expected first entry to be 'my-repo', got %q", parsed.Entries[0].Name)
+		}
+		if !parsed.Entries[0].IsGitRepo {
+			t.Error("Expected first entry is_git_repo=true")
+		}
+		if parsed.Entries[0].Path != repoDir {
+			t.Errorf("Expected first entry path=%q, got %q", repoDir, parsed.Entries[0].Path)
+		}
+
+		if parsed.Entries[1].Name != "plain-dir" {
+			t.Errorf("Expected second entry to be 'plain-dir', got %q", parsed.Entries[1].Name)
+		}
+		if parsed.Entries[1].IsGitRepo {
+			t.Error("Expected second entry is_git_repo=false")
+		}
+	})
+
+	t.Run("default path returns home directory", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		// No path param — handler defaults to home directory
+		req := httptest.NewRequest("GET", "/api/browse", nil)
+		rr := httptest.NewRecorder()
+		server.handleBrowse(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", rr.Code, rr.Body.String())
+		}
+		if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("Expected Content-Type application/json, got %s", ct)
+		}
+
+		var parsed browseResponse
+		if err := json.NewDecoder(rr.Body).Decode(&parsed); err != nil {
+			t.Fatalf("Failed to decode JSON: %v", err)
+		}
+		if parsed.CurrentPath == "" {
+			t.Error("Expected non-empty current_path for default (home) path")
+		}
+		if parsed.ParentPath == "" {
+			t.Error("Expected non-empty parent_path for default (home) path")
+		}
+	})
+
+	t.Run("current directory git detection", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		tmpDir := t.TempDir()
+		mkdirOrFail(t, filepath.Join(tmpDir, ".git"))
+
+		parsed := browseRequest(t, server, tmpDir)
+
+		if !parsed.IsGitRepo {
+			t.Error("Expected is_git_repo=true for directory with .git, got false")
+		}
+	})
+
+	t.Run("nonexistent path returns 404", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		req := httptest.NewRequest("GET", "/api/browse?path=/nonexistent/path/that/should/not/exist", nil)
+		rr := httptest.NewRecorder()
+		server.handleBrowse(rr, req)
+
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("Expected status %d, got %d; body: %s", http.StatusNotFound, rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("file path returns 400", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		tmpDir := t.TempDir()
+		tmpFile := filepath.Join(tmpDir, "afile.txt")
+		if err := os.WriteFile(tmpFile, []byte("hello"), 0644); err != nil {
+			t.Fatalf("Failed to create temp file: %v", err)
+		}
+
+		req := httptest.NewRequest("GET", "/api/browse?path="+url.QueryEscape(tmpFile), nil)
+		rr := httptest.NewRecorder()
+		server.handleBrowse(rr, req)
+
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("Expected status %d, got %d; body: %s", http.StatusBadRequest, rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("hidden directories are excluded", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		tmpDir := t.TempDir()
+		mkdirOrFail(t, filepath.Join(tmpDir, ".hidden"))
+		mkdirOrFail(t, filepath.Join(tmpDir, "visible"))
+
+		parsed := browseRequest(t, server, tmpDir)
+
+		for _, entry := range parsed.Entries {
+			if entry.Name == ".hidden" {
+				t.Error("Expected hidden directory to be excluded from entries")
+			}
+		}
+		found := false
+		for _, entry := range parsed.Entries {
+			if entry.Name == "visible" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("Expected visible directory to be included in entries")
+		}
+	})
+
+	t.Run("files are excluded from listing", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		tmpDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmpDir, "readme.md"), []byte("hi"), 0644); err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+		mkdirOrFail(t, filepath.Join(tmpDir, "src"))
+
+		parsed := browseRequest(t, server, tmpDir)
+
+		for _, entry := range parsed.Entries {
+			if entry.Name == "readme.md" {
+				t.Error("Expected files to be excluded from listing")
+			}
+		}
+		if len(parsed.Entries) != 1 || parsed.Entries[0].Name != "src" {
+			t.Errorf("Expected only 'src' directory in entries, got %+v", parsed.Entries)
+		}
+	})
+
+	t.Run("empty directory returns empty entries array", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		tmpDir := t.TempDir()
+
+		parsed := browseRequest(t, server, tmpDir)
+
+		if parsed.CurrentPath != tmpDir {
+			t.Errorf("Expected current_path=%q, got %q", tmpDir, parsed.CurrentPath)
+		}
+		if len(parsed.Entries) != 0 {
+			t.Errorf("Expected 0 entries for empty dir, got %d: %+v", len(parsed.Entries), parsed.Entries)
+		}
+	})
+
+	t.Run("parent path is correct", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		tmpDir := t.TempDir()
+		childDir := filepath.Join(tmpDir, "child")
+		mkdirOrFail(t, childDir)
+
+		parsed := browseRequest(t, server, childDir)
+
+		if parsed.ParentPath != tmpDir {
+			t.Errorf("Expected parent_path=%q, got %q", tmpDir, parsed.ParentPath)
+		}
+	})
+
+	t.Run("relative path is resolved to absolute", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		// Use "." as a relative path — should resolve to current working directory
+		parsed := browseRequest(t, server, ".")
+
+		if !filepath.IsAbs(parsed.CurrentPath) {
+			t.Errorf("Expected current_path to be absolute, got %q", parsed.CurrentPath)
+		}
+	})
+
+	t.Run("alphabetical ordering within same group", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		tmpDir := t.TempDir()
+		for _, name := range []string{"zebra", "alpha", "mango"} {
+			mkdirOrFail(t, filepath.Join(tmpDir, name))
+		}
+
+		parsed := browseRequest(t, server, tmpDir)
+
+		if len(parsed.Entries) != 3 {
+			t.Fatalf("Expected 3 entries, got %d", len(parsed.Entries))
+		}
+		if parsed.Entries[0].Name != "alpha" {
+			t.Errorf("Expected first entry 'alpha', got %q", parsed.Entries[0].Name)
+		}
+		if parsed.Entries[1].Name != "mango" {
+			t.Errorf("Expected second entry 'mango', got %q", parsed.Entries[1].Name)
+		}
+		if parsed.Entries[2].Name != "zebra" {
+			t.Errorf("Expected third entry 'zebra', got %q", parsed.Entries[2].Name)
+		}
+	})
+
+	t.Run("unreadable directory returns 403", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Permission tests unreliable on Windows")
+		}
+		if os.Getuid() == 0 {
+			t.Skip("Running as root — permission checks are bypassed")
+		}
+
+		server, _ := setupTestServer(t)
+
+		tmpDir := t.TempDir()
+		noRead := filepath.Join(tmpDir, "noperm")
+		mkdirOrFail(t, noRead)
+		if err := os.Chmod(noRead, 0000); err != nil {
+			t.Fatalf("Failed to chmod: %v", err)
+		}
+		t.Cleanup(func() {
+			os.Chmod(noRead, 0755) // restore so TempDir cleanup works
+		})
+
+		req := httptest.NewRequest("GET", "/api/browse?path="+url.QueryEscape(noRead), nil)
+		rr := httptest.NewRecorder()
+		server.handleBrowse(rr, req)
+
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("Expected status %d, got %d; body: %s", http.StatusForbidden, rr.Code, rr.Body.String())
+		}
+	})
+}
+
+// TestHandleBrowseViaRouter tests the browse endpoint is accessible through the router
+func TestHandleBrowseViaRouter(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	tmpDir := t.TempDir()
+	router := server.Router()
+
+	req := httptest.NewRequest("GET", "/api/browse?path="+url.QueryEscape(tmpDir), nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status %d via router, got %d; body: %s", http.StatusOK, resp.StatusCode, body)
+	}
+
+	if resp.Header.Get("Content-Type") != "application/json" {
+		t.Errorf("Expected Content-Type application/json via router, got %s", resp.Header.Get("Content-Type"))
+	}
+
+	var parsed browseResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("Failed to unmarshal response from router: %v; body: %s", err, body)
+	}
+
+	if parsed.CurrentPath != tmpDir {
+		t.Errorf("Expected current_path=%q, got %q", tmpDir, parsed.CurrentPath)
+	}
 }

@@ -12,6 +12,9 @@
                        placeholder="/path/to/git/repository"
                        data-testid="input-repo-path">
             </div>
+            <button type="button" id="btn-browse" class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500" data-testid="btn-browse">
+                Browse
+            </button>
             <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500" data-testid="btn-add-repo">
                 Add Repository
             </button>
@@ -46,4 +49,203 @@
         {{end}}
     </div>
 </div>
+
+<!-- File Explorer Modal -->
+<div id="browse-modal" class="browse-modal-overlay" style="display:none;" data-testid="browse-modal">
+    <div class="browse-modal">
+        <div class="browse-modal-header">
+            <h3 class="font-semibold text-lg">Select Repository Directory</h3>
+            <button id="browse-close" class="browse-modal-close" data-testid="browse-close">&times;</button>
+        </div>
+
+        <!-- Current path / breadcrumb -->
+        <div class="browse-breadcrumb" id="browse-breadcrumb" data-testid="browse-breadcrumb"></div>
+
+        <!-- Directory listing -->
+        <div class="browse-listing" id="browse-listing" data-testid="browse-listing">
+            <p class="text-gray-400 text-sm p-4">Loading...</p>
+        </div>
+
+        <!-- Footer with select button -->
+        <div class="browse-modal-footer">
+            <span id="browse-selected-path" class="text-sm text-gray-500 truncate flex-1" data-testid="browse-selected-path"></span>
+            <button id="browse-select" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed" disabled data-testid="browse-select">
+                Select
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    var modal = document.getElementById('browse-modal');
+    var listing = document.getElementById('browse-listing');
+    var breadcrumb = document.getElementById('browse-breadcrumb');
+    var selectedPathEl = document.getElementById('browse-selected-path');
+    var selectBtn = document.getElementById('browse-select');
+    var repoPathInput = document.getElementById('repo-path');
+    var currentPath = '';
+    var currentIsGitRepo = false;
+
+    // Open the modal
+    document.getElementById('btn-browse').addEventListener('click', function() {
+        modal.style.display = 'flex';
+        // Start from the value in the input, or home directory
+        var startPath = repoPathInput.value || '';
+        fetchDirectory(startPath);
+    });
+
+    // Close the modal
+    document.getElementById('browse-close').addEventListener('click', closeModal);
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) closeModal();
+    });
+
+    // Keyboard: Escape closes modal
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && modal.style.display !== 'none') {
+            closeModal();
+        }
+    });
+
+    function closeModal() {
+        modal.style.display = 'none';
+    }
+
+    // Select button — set path in input and close
+    selectBtn.addEventListener('click', function() {
+        if (currentPath) {
+            repoPathInput.value = currentPath;
+            closeModal();
+        }
+    });
+
+    // Fetch directory listing from API
+    function fetchDirectory(path) {
+        var url = '/api/browse';
+        if (path) {
+            url += '?path=' + encodeURIComponent(path);
+        }
+
+        listing.innerHTML = '<p class="text-gray-400 text-sm p-4">Loading...</p>';
+
+        fetch(url)
+            .then(function(resp) {
+                if (!resp.ok) {
+                    return resp.text().then(function(t) { throw new Error(t); });
+                }
+                return resp.json();
+            })
+            .then(function(data) {
+                currentPath = data.current_path;
+                currentIsGitRepo = data.is_git_repo;
+                renderBreadcrumb(data.current_path, data.parent_path);
+                renderListing(data);
+                updateSelectButton();
+            })
+            .catch(function(err) {
+                listing.innerHTML = '<p class="text-red-500 text-sm p-4">Error: ' + escapeHtml(err.message) + '</p>';
+            });
+    }
+
+    // Render breadcrumb navigation
+    function renderBreadcrumb(currentPath, parentPath) {
+        var parts = currentPath.split('/').filter(function(p) { return p !== ''; });
+        var html = '';
+
+        // Root
+        html += '<button class="browse-crumb" data-path="/" data-testid="crumb-root">/</button>';
+
+        var built = '';
+        for (var i = 0; i < parts.length; i++) {
+            built += '/' + parts[i];
+            var isLast = (i === parts.length - 1);
+            html += '<span class="browse-crumb-sep">/</span>';
+            if (isLast) {
+                html += '<span class="browse-crumb-current">' + escapeHtml(parts[i]) + '</span>';
+            } else {
+                html += '<button class="browse-crumb" data-path="' + escapeHtml(built) + '">' + escapeHtml(parts[i]) + '</button>';
+            }
+        }
+
+        breadcrumb.innerHTML = html;
+
+        // Attach breadcrumb click handlers
+        var crumbs = breadcrumb.querySelectorAll('.browse-crumb');
+        for (var j = 0; j < crumbs.length; j++) {
+            crumbs[j].addEventListener('click', function() {
+                fetchDirectory(this.getAttribute('data-path'));
+            });
+        }
+    }
+
+    // Render directory listing
+    function renderListing(data) {
+        if (!data.entries || data.entries.length === 0) {
+            listing.innerHTML = '<p class="text-gray-400 text-sm p-4">No subdirectories found.</p>';
+            return;
+        }
+
+        var html = '<ul class="browse-list">';
+
+        // Parent directory link
+        if (data.parent_path && data.parent_path !== data.current_path) {
+            html += '<li class="browse-item browse-item-parent" data-path="' + escapeHtml(data.parent_path) + '">';
+            html += '<span class="browse-icon">&#x1F4C1;</span>';
+            html += '<span class="browse-name">..</span>';
+            html += '</li>';
+        }
+
+        for (var i = 0; i < data.entries.length; i++) {
+            var entry = data.entries[i];
+            var classes = 'browse-item';
+            if (entry.is_git_repo) {
+                classes += ' browse-item-repo';
+            }
+
+            html += '<li class="' + classes + '" data-path="' + escapeHtml(entry.path) + '" data-is-repo="' + entry.is_git_repo + '">';
+            if (entry.is_git_repo) {
+                html += '<span class="browse-icon browse-icon-repo">&#x1F4E6;</span>';
+            } else {
+                html += '<span class="browse-icon">&#x1F4C1;</span>';
+            }
+            html += '<span class="browse-name">' + escapeHtml(entry.name) + '</span>';
+            if (entry.is_git_repo) {
+                html += '<span class="browse-badge">git</span>';
+            }
+            html += '</li>';
+        }
+
+        html += '</ul>';
+        listing.innerHTML = html;
+
+        // Attach click handlers to directory items
+        var items = listing.querySelectorAll('.browse-item');
+        for (var j = 0; j < items.length; j++) {
+            items[j].addEventListener('click', function() {
+                fetchDirectory(this.getAttribute('data-path'));
+            });
+        }
+    }
+
+    // Update the select button state
+    function updateSelectButton() {
+        if (currentIsGitRepo) {
+            selectBtn.disabled = false;
+            selectedPathEl.textContent = currentPath + ' (git repository)';
+            selectedPathEl.className = 'text-sm text-green-600 truncate flex-1';
+        } else {
+            selectBtn.disabled = false;
+            selectedPathEl.textContent = currentPath;
+            selectedPathEl.className = 'text-sm text-gray-500 truncate flex-1';
+        }
+    }
+
+    function escapeHtml(str) {
+        var div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+})();
+</script>
 {{end}} 

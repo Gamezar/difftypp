@@ -47,4 +47,159 @@ div[tabindex="0"]:focus {
 
 .diff-container::-webkit-scrollbar-thumb:hover {
     background: #a1a1a1;
+}
+
+/* ── File Explorer Modal ── */
+
+.browse-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.browse-modal {
+    background: #fff;
+    border-radius: 0.5rem;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    width: 90%;
+    max-width: 640px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.browse-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.browse-modal-close {
+    font-size: 1.5rem;
+    line-height: 1;
+    color: #6b7280;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.25rem;
+}
+
+.browse-modal-close:hover {
+    color: #111827;
+}
+
+/* Breadcrumb bar */
+.browse-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 0.125rem;
+    padding: 0.5rem 1.25rem;
+    background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 0.8125rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    overflow-x: auto;
+    white-space: nowrap;
+}
+
+.browse-crumb {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #2563eb;
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+    font-family: inherit;
+    font-size: inherit;
+}
+
+.browse-crumb:hover {
+    background: #dbeafe;
+}
+
+.browse-crumb-sep {
+    color: #9ca3af;
+}
+
+.browse-crumb-current {
+    color: #111827;
+    font-weight: 600;
+    padding: 0.125rem 0.25rem;
+}
+
+/* Directory listing */
+.browse-listing {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 200px;
+    max-height: 400px;
+}
+
+.browse-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.browse-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1.25rem;
+    cursor: pointer;
+    border-bottom: 1px solid #f3f4f6;
+    font-size: 0.875rem;
+}
+
+.browse-item:hover {
+    background: #f3f4f6;
+}
+
+.browse-item-repo {
+    background: #f0fdf4;
+}
+
+.browse-item-repo:hover {
+    background: #dcfce7;
+}
+
+.browse-icon {
+    flex-shrink: 0;
+    width: 1.25rem;
+    text-align: center;
+}
+
+.browse-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.browse-badge {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    background: #16a34a;
+    color: #fff;
+    padding: 0.125rem 0.375rem;
+    border-radius: 9999px;
+    flex-shrink: 0;
+}
+
+.browse-modal-footer {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1.25rem;
+    border-top: 1px solid #e5e7eb;
+    background: #f9fafb;
+    border-radius: 0 0 0.5rem 0.5rem;
 } 
