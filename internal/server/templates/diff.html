@@ -488,6 +488,31 @@ function initializeCommentSystem() {
 
     cfCancel.addEventListener('click', hideCommentForm);
 
+    // Add comment form — use fetch to avoid page jump to top
+    cfForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var submitBtn = cfForm.querySelector('[type="submit"]');
+        if (submitBtn.disabled) return;
+        submitBtn.disabled = true;
+        var originalText = submitBtn.textContent;
+        submitBtn.textContent = 'Saving...';
+        var action = cfForm.getAttribute('action');
+        var formData = new URLSearchParams(new FormData(cfForm));
+        fetch(action, { method: 'POST', body: formData }).then(function(resp) {
+            if (resp.ok) {
+                window.location.reload();
+            } else {
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+                alert('Failed to save comment (status ' + resp.status + '). Please try again.');
+            }
+        }).catch(function() {
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalText;
+            alert('Network error — comment was not saved.');
+        });
+    });
+
     // Close comment form on Escape
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
@@ -500,12 +525,20 @@ function initializeCommentSystem() {
     document.querySelectorAll('.delete-comment-form').forEach(function(form) {
         form.addEventListener('submit', function(e) {
             e.preventDefault();
+            var submitBtn = form.querySelector('[type="submit"], button');
+            if (submitBtn && submitBtn.disabled) return;
+            if (submitBtn) submitBtn.disabled = true;
             var action = form.getAttribute('action');
-            fetch(action, { method: 'DELETE' }).then(function() {
-                window.location.reload();
+            fetch(action, { method: 'DELETE' }).then(function(resp) {
+                if (resp.ok) {
+                    window.location.reload();
+                } else {
+                    if (submitBtn) submitBtn.disabled = false;
+                    alert('Failed to delete comment (status ' + resp.status + '). Please try again.');
+                }
             }).catch(function() {
-                // Fallback: just reload
-                window.location.reload();
+                if (submitBtn) submitBtn.disabled = false;
+                alert('Network error — comment was not deleted.');
             });
         });
     });
