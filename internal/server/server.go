@@ -76,7 +76,7 @@ func New(storage storage.Storage) (*Server, error) {
 		"commentsForLine": func(comments []models.ReviewComment, filePath string, lineNum int, side string) []models.ReviewComment {
 			var result []models.ReviewComment
 			for _, c := range comments {
-				if c.FilePath == filePath && lineNum >= c.StartLine && lineNum <= c.EndLine {
+				if c.FilePath == filePath && lineNum == c.EndLine {
 					if c.Side == side || c.Side == "both" || side == "" {
 						result = append(result, c)
 					}
