@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -3361,4 +3362,169 @@ func TestHandleBrowseViaRouter(t *testing.T) {
 	if parsed.CurrentPath != tmpDir {
 		t.Errorf("Expected current_path=%q, got %q", tmpDir, parsed.CurrentPath)
 	}
+}
+
+// TestCommentsForLine verifies the commentsForLine template function correctly
+// matches comments using both right (new) and left (old) line numbers.
+// This is critical for displaying comments on deleted lines, which only have
+// a valid left line number (right is 0).
+func TestCommentsForLine(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Parse a test template that calls commentsForLine and outputs matching IDs.
+	testTmpl, err := server.tmpl.New("test_cfl").Parse(
+		`{{ range commentsForLine .Comments .FilePath .RightNum .LeftNum }}{{.ID}},{{ end }}`,
+	)
+	if err != nil {
+		t.Fatalf("parse test template: %v", err)
+	}
+
+	// run executes the template and returns the matched comment IDs.
+	run := func(t *testing.T, comments []models.ReviewComment, filePath string, rightNum, leftNum int) []string {
+		t.Helper()
+		data := map[string]interface{}{
+			"Comments": comments,
+			"FilePath": filePath,
+			"RightNum": rightNum,
+			"LeftNum":  leftNum,
+		}
+		var buf bytes.Buffer
+		if err := testTmpl.Execute(&buf, data); err != nil {
+			t.Fatalf("execute template: %v", err)
+		}
+		out := buf.String()
+		if out == "" {
+			return nil
+		}
+		return strings.Split(strings.TrimSuffix(out, ","), ",")
+	}
+
+	t.Run("matches right-side comment by rightNum", func(t *testing.T) {
+		comments := []models.ReviewComment{
+			{ID: "c1", FilePath: "file.go", EndLine: 10, Side: "right"},
+		}
+		got := run(t, comments, "file.go", 10, 0)
+		if len(got) != 1 || got[0] != "c1" {
+			t.Errorf("expected [c1], got %v", got)
+		}
+	})
+
+	t.Run("matches left-side comment by leftNum on deletion line", func(t *testing.T) {
+		comments := []models.ReviewComment{
+			{ID: "c2", FilePath: "file.go", EndLine: 5, Side: "left"},
+		}
+		// Deletion line: rightNum=0, leftNum=5
+		got := run(t, comments, "file.go", 0, 5)
+		if len(got) != 1 || got[0] != "c2" {
+			t.Errorf("expected [c2], got %v", got)
+		}
+	})
+
+	t.Run("left-side comment NOT matched via rightNum", func(t *testing.T) {
+		comments := []models.ReviewComment{
+			{ID: "c3", FilePath: "file.go", EndLine: 10, Side: "left"},
+		}
+		// Addition line: rightNum=10, leftNum=0 — left comment must not appear
+		got := run(t, comments, "file.go", 10, 0)
+		if len(got) != 0 {
+			t.Errorf("expected no matches for left-side comment via rightNum, got %v", got)
+		}
+	})
+
+	t.Run("matches both-side comment by rightNum", func(t *testing.T) {
+		comments := []models.ReviewComment{
+			{ID: "c4", FilePath: "file.go", EndLine: 10, Side: "both"},
+		}
+		got := run(t, comments, "file.go", 10, 5)
+		if len(got) != 1 || got[0] != "c4" {
+			t.Errorf("expected [c4], got %v", got)
+		}
+	})
+
+	t.Run("matches both-side comment on deletion line by leftNum", func(t *testing.T) {
+		comments := []models.ReviewComment{
+			{ID: "c4b", FilePath: "file.go", EndLine: 5, Side: "both"},
+		}
+		// Deletion line: rightNum=0, leftNum=5 — "both" must still match
+		got := run(t, comments, "file.go", 0, 5)
+		if len(got) != 1 || got[0] != "c4b" {
+			t.Errorf("expected [c4b], got %v", got)
+		}
+	})
+
+	t.Run("empty-side comment matched by rightNum", func(t *testing.T) {
+		comments := []models.ReviewComment{
+			{ID: "c5", FilePath: "file.go", EndLine: 10, Side: ""},
+		}
+		got := run(t, comments, "file.go", 10, 0)
+		if len(got) != 1 || got[0] != "c5" {
+			t.Errorf("expected [c5], got %v", got)
+		}
+	})
+
+	t.Run("filters by file path", func(t *testing.T) {
+		comments := []models.ReviewComment{
+			{ID: "c6", FilePath: "other.go", EndLine: 10, Side: "right"},
+		}
+		got := run(t, comments, "file.go", 10, 10)
+		if len(got) != 0 {
+			t.Errorf("expected no matches for wrong file path, got %v", got)
+		}
+	})
+
+	t.Run("zero line numbers match nothing", func(t *testing.T) {
+		comments := []models.ReviewComment{
+			{ID: "c7", FilePath: "file.go", EndLine: 10, Side: "right"},
+		}
+		got := run(t, comments, "file.go", 0, 0)
+		if len(got) != 0 {
+			t.Errorf("expected no matches with zero line numbers, got %v", got)
+		}
+	})
+
+	t.Run("deletion line with mixed comments returns only left match", func(t *testing.T) {
+		comments := []models.ReviewComment{
+			{ID: "right10", FilePath: "file.go", EndLine: 10, Side: "right"},
+			{ID: "left5", FilePath: "file.go", EndLine: 5, Side: "left"},
+			{ID: "right20", FilePath: "file.go", EndLine: 20, Side: "right"},
+			{ID: "wrongfile", FilePath: "other.go", EndLine: 5, Side: "left"},
+		}
+		// Deletion line: rightNum=0, leftNum=5
+		got := run(t, comments, "file.go", 0, 5)
+		if len(got) != 1 || got[0] != "left5" {
+			t.Errorf("expected [left5], got %v", got)
+		}
+	})
+
+	t.Run("context line matches all sides", func(t *testing.T) {
+		comments := []models.ReviewComment{
+			{ID: "right10", FilePath: "file.go", EndLine: 10, Side: "right"},
+			{ID: "both10", FilePath: "file.go", EndLine: 10, Side: "both"},
+			{ID: "left10", FilePath: "file.go", EndLine: 10, Side: "left"},
+		}
+		// Context line: rightNum=10, leftNum=10
+		got := run(t, comments, "file.go", 10, 10)
+		if len(got) != 3 {
+			t.Errorf("expected 3 matches for context line, got %v", got)
+		}
+	})
+
+	t.Run("addition line ignores left-side comments", func(t *testing.T) {
+		comments := []models.ReviewComment{
+			{ID: "right15", FilePath: "file.go", EndLine: 15, Side: "right"},
+			{ID: "left7", FilePath: "file.go", EndLine: 7, Side: "left"},
+		}
+		// Addition line: rightNum=15, leftNum=0
+		got := run(t, comments, "file.go", 15, 0)
+		if len(got) != 1 || got[0] != "right15" {
+			t.Errorf("expected [right15], got %v", got)
+		}
+	})
+
+	t.Run("no comments returns empty", func(t *testing.T) {
+		got := run(t, []models.ReviewComment{}, "file.go", 10, 5)
+		if got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
 }
