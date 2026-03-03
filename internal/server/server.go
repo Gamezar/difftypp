@@ -72,12 +72,28 @@ func New(storage storage.Storage) (*Server, error) {
 			}
 			return "context"
 		},
-		// commentsForLine filters review comments for a specific file and line number
-		"commentsForLine": func(comments []models.ReviewComment, filePath string, lineNum int, side string) []models.ReviewComment {
+		// commentsForLine filters review comments for a specific file and line number.
+		// It checks both the right (new) and left (old) line numbers so that
+		// comments on deleted lines (which only have a left number) are displayed.
+		"commentsForLine": func(comments []models.ReviewComment, filePath string, rightNum int, leftNum int) []models.ReviewComment {
 			var result []models.ReviewComment
 			for _, c := range comments {
-				if c.FilePath == filePath && lineNum == c.EndLine {
-					if c.Side == side || c.Side == "both" || side == "" {
+				if c.FilePath != filePath {
+					continue
+				}
+				rightMatch := rightNum > 0 && c.EndLine == rightNum
+				leftMatch := leftNum > 0 && c.EndLine == leftNum
+				switch c.Side {
+				case "left":
+					if leftMatch {
+						result = append(result, c)
+					}
+				case "right":
+					if rightMatch {
+						result = append(result, c)
+					}
+				default: // "both" or ""
+					if rightMatch || leftMatch {
 						result = append(result, c)
 					}
 				}

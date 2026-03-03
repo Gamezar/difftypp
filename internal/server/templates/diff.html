@@ -152,8 +152,8 @@
                                     {{ else }}bg-white{{ end }}">{{ trimLinePrefix $line }}</td>
                             </tr>
 
-                            {{/* Render existing comments anchored to this line (by right/new line number) */}}
-                            {{ $lineComments := commentsForLine $fileComments $filePath $rightNum "" }}
+                            {{/* Render existing comments anchored to this line (checks both right and left numbers) */}}
+                            {{ $lineComments := commentsForLine $fileComments $filePath $rightNum $leftNum }}
                             {{ range $lineComments }}
                             <tr class="diff-comment-row {{ if eq .Status "resolved" }}diff-comment-resolved{{ end }}">
                                 <td colspan="3" class="px-4 py-2
@@ -383,21 +383,41 @@ function initializeCommentSystem() {
     var dragStartSide = '';
     var dragCurrentLine = 0;
 
+    // Resolve a valid line number and side from a clicked line-number cell.
+    // When the clicked cell has no number (0), falls back to the other side.
+    function resolveLineInfo(cell) {
+        var lineNum = parseInt(cell.getAttribute('data-line-num'), 10) || 0;
+        var side = cell.getAttribute('data-side') || 'right';
+
+        if (lineNum <= 0) {
+            var row = cell.closest('tr');
+            if (!row) return null;
+            // Try the opposite side's number
+            var otherAttr = (side === 'right') ? 'data-left-num' : 'data-right-num';
+            var otherSide = (side === 'right') ? 'left' : 'right';
+            lineNum = parseInt(row.getAttribute(otherAttr), 10) || 0;
+            side = otherSide;
+        }
+
+        if (lineNum <= 0) return null;
+        return { lineNum: lineNum, side: side };
+    }
+
     // Click on a line number to start comment / start drag
     diffTable.addEventListener('mousedown', function(e) {
         var cell = e.target.closest('.diff-line-num[data-line-num]');
         if (!cell) return;
-        var lineNum = parseInt(cell.getAttribute('data-line-num'), 10);
-        if (lineNum <= 0) return;
+        var info = resolveLineInfo(cell);
+        if (!info) return;
 
         e.preventDefault();
         isDragging = true;
-        dragStartLine = lineNum;
-        dragStartSide = cell.getAttribute('data-side') || 'right';
-        dragCurrentLine = lineNum;
+        dragStartLine = info.lineNum;
+        dragStartSide = info.side;
+        dragCurrentLine = info.lineNum;
         
         clearLineSelection();
-        highlightRange(dragStartLine, dragCurrentLine);
+        highlightRange(dragStartLine, dragCurrentLine, dragStartSide);
     });
 
     // Track drag movement
@@ -405,12 +425,12 @@ function initializeCommentSystem() {
         if (!isDragging) return;
         var cell = e.target.closest('.diff-line-num[data-line-num]');
         if (!cell) return;
-        var lineNum = parseInt(cell.getAttribute('data-line-num'), 10);
-        if (lineNum <= 0) return;
+        var info = resolveLineInfo(cell);
+        if (!info) return;
 
-        dragCurrentLine = lineNum;
+        dragCurrentLine = info.lineNum;
         clearLineSelection();
-        highlightRange(dragStartLine, dragCurrentLine);
+        highlightRange(dragStartLine, dragCurrentLine, dragStartSide);
     });
 
     // End drag — show comment form
@@ -424,14 +444,14 @@ function initializeCommentSystem() {
         showCommentForm(startLine, endLine, dragStartSide, e);
     });
 
-    function highlightRange(start, end) {
+    function highlightRange(start, end, side) {
         var lo = Math.min(start, end);
         var hi = Math.max(start, end);
+        var attr = (side === 'left') ? 'data-left-num' : 'data-right-num';
         var rows = diffTable.querySelectorAll('.diff-line');
         rows.forEach(function(row) {
-            var right = parseInt(row.getAttribute('data-right-num'), 10) || 0;
-            var left = parseInt(row.getAttribute('data-left-num'), 10) || 0;
-            if ((right >= lo && right <= hi) || (left >= lo && left <= hi)) {
+            var num = parseInt(row.getAttribute(attr), 10) || 0;
+            if (num >= lo && num <= hi) {
                 row.classList.add('line-selected');
             }
         });
