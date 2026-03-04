@@ -9,13 +9,16 @@ assets into the binary via `//go:embed`. Storage is JSON file-based under `$HOME
 ## Build / Test / Lint Commands
 
 ```bash
-# Build
+# Build (Go binary)
 go build -o diffty ./cmd/diffty
 
-# Run all tests
+# Build (TypeScript → JS bundles, run from web/ directory)
+cd web && npm run build    # outputs to internal/server/static/js/
+
+# Run all Go tests
 go test ./...
 
-# Run all tests with verbose output
+# Run all Go tests with verbose output
 go test -v ./...
 
 # Run a single test by name (regex match on test function name)
@@ -33,6 +36,9 @@ go test -v ./internal/storage/
 
 # Run tests with race detection
 go test -race ./...
+
+# Run TypeScript tests (from web/ directory)
+cd web && npm test         # runs vitest
 
 # Format code (always run before committing)
 gofmt -w .
@@ -68,10 +74,20 @@ internal/
   server/server.go          — HTTP server, routing (Go 1.22 ServeMux), handlers, embedded templates
   server/templates/          — HTML templates (layout, index, compare, diff, error)
   server/static/css/         — Tailwind CSS (CDN) + custom CSS
+  server/static/js/          — Built JS bundles (diff.js, index.js, compare.js, review.js)
   storage/storage.go        — Storage interface + JSONStorage implementation (JSON file persistence)
+web/                         — TypeScript source for client-side JS
+  build.ts                  — esbuild build script (4 entry points → internal/server/static/js/)
+  src/shared/               — Shared utilities (dom-utils, loading)
+  src/diff/                 — Diff page modules (cursor, comments, status filter)
+  src/index/                — Index page modules (file explorer)
+  src/compare/              — Compare page modules (commit selector)
+  src/review/               — Review page modules (clipboard)
 ```
 
-All application code lives under `internal/` — nothing is importable externally.
+All Go application code lives under `internal/` — nothing is importable externally.
+Built JS files in `internal/server/static/js/` are committed to the repo so `go build` works without Node.js.
+To rebuild JS after editing TypeScript: `cd web && npm run build`.
 
 ## Code Style Guidelines
 

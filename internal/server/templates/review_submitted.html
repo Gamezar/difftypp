@@ -42,32 +42,5 @@
     </div>
 </div>
 
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    var copyBtn = document.getElementById('copy-btn');
-    var markdownEl = document.getElementById('markdown-content');
-    var copySuccess = document.getElementById('copy-success');
-
-    if (copyBtn && markdownEl) {
-        copyBtn.addEventListener('click', function() {
-            var text = markdownEl.textContent;
-            navigator.clipboard.writeText(text).then(function() {
-                copySuccess.classList.remove('hidden');
-                copyBtn.textContent = 'Copied!';
-                setTimeout(function() {
-                    copySuccess.classList.add('hidden');
-                    copyBtn.textContent = 'Copy to Clipboard';
-                }, 2000);
-            }).catch(function() {
-                // Fallback: select text
-                var range = document.createRange();
-                range.selectNodeContents(markdownEl);
-                var sel = window.getSelection();
-                sel.removeAllRanges();
-                sel.addRange(range);
-            });
-        });
-    }
-});
-</script>
+<script src="/static/js/review.js"></script>
 {{end}}

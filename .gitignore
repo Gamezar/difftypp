@@ -31,4 +31,7 @@ Thumbs.db
 # Codemap
 .codemap/
 
+# Node modules (web/ frontend build tooling)
+web/node_modules/
+
 # Serena - internal .serena/.gitignore manages what to track

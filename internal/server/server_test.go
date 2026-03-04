@@ -1041,16 +1041,14 @@ func TestCompareCommitsRendersInteractiveList(t *testing.T) {
 		{"commit-row data-testid", `data-testid="commit-row"`},
 		{"data-hash attribute", `data-hash="`},
 		{"instruction text", "Click commits to select target and source refs"},
-		{"DOMContentLoaded script", "DOMContentLoaded"},
-		{"selection state object", "target: null, source: null"},
 		{"target input ID", `id="target"`},
 		{"source input ID", `id="source"`},
 		{"pointer-events-none on children", "pointer-events-none"},
-		{"commit-badge class in script", "commit-badge"},
 		{"commits-hint ID", `id="commits-hint"`},
 		{"compare-form-commits testid", `data-testid="compare-form-commits"`},
 		{"First commit subject", "First commit"},
 		{"Second commit subject", "Second commit"},
+		{"external JS bundle", `src="/static/js/compare.js"`},
 	}
 
 	for _, c := range checks {
@@ -1096,19 +1094,9 @@ func TestCompareCommitsRendersInteractiveList(t *testing.T) {
 		t.Errorf("Expected at least 2 data-hash attributes, found %d", hashCount)
 	}
 
-	// Verify the script block contains the expected selection logic patterns
-	scriptChecks := []string{
-		"selection.target",
-		"selection.source",
-		"updateAll",
-		"updateRow",
-		"targetInput.value",
-		"sourceInput.value",
-	}
-	for _, sc := range scriptChecks {
-		if !strings.Contains(bodyStr, sc) {
-			t.Errorf("Expected script to contain %q", sc)
-		}
+	// Verify JS is loaded as external bundle (no inline script)
+	if strings.Contains(bodyStr, "DOMContentLoaded") {
+		t.Errorf("Expected no inline DOMContentLoaded script; JS should be in external bundle")
 	}
 }
 
@@ -1145,8 +1133,6 @@ func TestCompareBranchesModeNoCommitsList(t *testing.T) {
 		{"commits-list data-testid", `data-testid="commits-list"`},
 		{"commit-row data-testid", `data-testid="commit-row"`},
 		{"data-hash attribute", `data-hash="`},
-		{"DOMContentLoaded script", "DOMContentLoaded"},
-		{"selection state", "target: null, source: null"},
 		{"compare-form-commits testid", `data-testid="compare-form-commits"`},
 	}
 
