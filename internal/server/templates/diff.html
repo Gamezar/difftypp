@@ -59,7 +59,7 @@
                 {{ if .OpenCommentCount }}{{ if gt .OpenCommentCount 0 }}
                 <form method="POST" action="/api/review/submit?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&mode={{urlquery .DiffMode}}">
                     <button type="submit" class="px-4 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 font-medium" data-testid="btn-submit-review">
-                        Submit Review ({{ .OpenCommentCount }} comment{{ if gt .OpenCommentCount 1 }}s{{ end }})
+                        <span class="inline-flex items-center">Submit Review ({{ .OpenCommentCount }} comment{{ if gt .OpenCommentCount 1 }}s{{ end }}) <span class="ml-1 key-hint-light" aria-hidden="true">S</span></span>
                     </button>
                 </form>
                 {{ end }}{{ end }}
@@ -83,15 +83,21 @@
                     <div class="flex justify-between items-center p-4 border-b">
                         <h3 class="font-mono text-lg font-medium">{{.SelectedFile}}</h3>
                         <div class="flex space-x-2">
-                            <button id="prev-file" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300" title="Previous file" data-testid="btn-prev-file">
-                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
-                                </svg>
+                            <button id="prev-file" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300" title="Previous file (h)" data-testid="btn-prev-file">
+                                <span class="inline-flex items-center">
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                                    </svg>
+                                    <span class="ml-1 key-hint" aria-hidden="true">h</span>
+                                </span>
                             </button>
-                            <button id="next-file" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300" title="Next file" data-testid="btn-next-file">
-                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-                                </svg>
+                            <button id="next-file" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300" title="Next file (l)" data-testid="btn-next-file">
+                                <span class="inline-flex items-center">
+                                    <span class="mr-1 key-hint" aria-hidden="true">l</span>
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                    </svg>
+                                </span>
                             </button>
                         </div>
                     </div>
@@ -179,13 +185,15 @@
                                                 <button type="submit" class="px-2 py-1 text-xs rounded
                                                     {{ if eq .Status "resolved" }}bg-blue-100 text-blue-700 hover:bg-blue-200{{ else }}bg-green-100 text-green-700 hover:bg-green-200{{ end }}"
                                                     data-testid="btn-comment-{{ if eq .Status "resolved" }}reopen{{ else }}resolve{{ end }}-{{.ID}}">
-                                                    {{ if eq .Status "resolved" }}Re-open{{ else }}Resolve{{ end }}
+                                                    <span class="inline-flex items-center">{{ if eq .Status "resolved" }}Re-open{{ else }}Resolve{{ end }} <span class="ml-1 key-hint" aria-hidden="true">x</span></span>
                                                 </button>
                                             </form>
                                             {{/* Delete */}}
                                             <form method="POST" action="/api/review/comment?repo={{urlquery $repoPath}}&source={{urlquery $sourceBranch}}&target={{urlquery $targetBranch}}&source_commit={{urlquery $sourceCommit}}&target_commit={{urlquery $targetCommit}}&comment_id={{urlquery .ID}}&file={{urlquery $filePath}}&mode={{urlquery $diffMode}}" class="inline delete-comment-form">
                                                 <input type="hidden" name="_method" value="DELETE">
-                                                <button type="submit" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200" data-testid="btn-comment-delete-{{.ID}}">Delete</button>
+                                                <button type="submit" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200" data-testid="btn-comment-delete-{{.ID}}">
+                                                    <span class="inline-flex items-center">Delete <span class="ml-1 key-hint" aria-hidden="true">d</span></span>
+                                                </button>
                                             </form>
                                         </div>
                                     </div>
@@ -214,8 +222,12 @@
                             <input type="hidden" name="side" id="cf-side">
                             <textarea name="body" id="cf-body" rows="4" class="w-full border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Leave a comment..." data-testid="comment-textarea"></textarea>
                             <div class="flex justify-end gap-2 mt-2">
-                                <button type="button" id="cf-cancel" class="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300" data-testid="btn-comment-cancel">Cancel</button>
-                                <button type="submit" class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700" data-testid="btn-comment-submit">Add Comment</button>
+                                <button type="button" id="cf-cancel" class="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300" data-testid="btn-comment-cancel">
+                                    <span class="inline-flex items-center">Cancel <span class="ml-1 key-hint" aria-hidden="true">Esc</span></span>
+                                </button>
+                                <button type="submit" class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700" data-testid="btn-comment-submit">
+                                    <span class="inline-flex items-center">Add Comment <span class="ml-1 key-hint-light" aria-hidden="true">Ctrl+Enter</span></span>
+                                </button>
                             </div>
                         </form>
                     </div>
@@ -300,6 +312,45 @@
         </svg>
         <span>Loading file...</span>
     </div>
+
+    {{/* Keyboard shortcuts help overlay */}}
+    <div id="shortcuts-overlay" class="shortcuts-overlay hidden">
+        <div class="shortcuts-panel">
+            <div class="flex justify-between items-center mb-3">
+                <h3 style="margin:0">Keyboard Shortcuts</h3>
+                <button id="shortcuts-close" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+            </div>
+            {{ if .SelectedFile }}
+            <table>
+                <tr><th colspan="2" style="padding-top:0.5rem">Navigation</th></tr>
+                <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Move cursor down / up</td></tr>
+                <tr><td><kbd>Shift+j</kbd> / <kbd>Shift+k</kbd></td><td>Extend selection down / up</td></tr>
+                <tr><td><kbd>h</kbd> / <kbd>l</kbd></td><td>Previous / next file</td></tr>
+                <tr><td><kbd>Tab</kbd></td><td>Toggle side (left/right) on context lines</td></tr>
+                <tr><td><kbd>gg</kbd></td><td>Jump to first line</td></tr>
+                <tr><td><kbd>G</kbd></td><td>Jump to last line</td></tr>
+                <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Previous / next comment</td></tr>
+                <tr><th colspan="2" style="padding-top:0.5rem">Comments</th></tr>
+                <tr><td><kbd>c</kbd></td><td>Add comment on cursor / selection</td></tr>
+                <tr><td><kbd>x</kbd></td><td>Resolve / re-open comment</td></tr>
+                <tr><td><kbd>d</kbd></td><td>Delete comment (with confirmation)</td></tr>
+                <tr><td><kbd>Ctrl+Enter</kbd></td><td>Save comment (in textarea)</td></tr>
+                <tr><td><kbd>Escape</kbd></td><td>Cancel / clear</td></tr>
+                <tr><th colspan="2" style="padding-top:0.5rem">Review</th></tr>
+                <tr><td><kbd>a</kbd></td><td>Approve file</td></tr>
+                <tr><td><kbd>r</kbd></td><td>Reject file</td></tr>
+                <tr><td><kbd>s</kbd></td><td>Skip file</td></tr>
+                <tr><td><kbd>S</kbd></td><td>Submit review</td></tr>
+            </table>
+            {{ else }}
+            <table>
+                <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Move highlight down / up</td></tr>
+                <tr><td><kbd>Enter</kbd></td><td>Open highlighted file</td></tr>
+            </table>
+            {{ end }}
+            <p style="margin-top:0.75rem;font-size:0.8rem;color:#9ca3af">Press <kbd>?</kbd> to close</p>
+        </div>
+    </div>
 </div>
 
 <style>
@@ -337,20 +388,87 @@
 
     /* Delete form — browsers can't send DELETE via form, so we use POST with _method */
     .delete-comment-form { display: inline; }
+
+    /* Cursor navigation styles */
+    .diff-line-cursor > td {
+        outline: 2px solid #6366f1;
+        outline-offset: -2px;
+    }
+    .diff-line-cursor .diff-line-num.cursor-side-active {
+        background-color: #e0e7ff !important;
+        color: #4338ca !important;
+    }
+    .diff-line.comment-delete-target > td {
+        animation: delete-flash 0.3s ease-in-out 2;
+    }
+    @keyframes delete-flash {
+        0%, 100% { background-color: inherit; }
+        50% { background-color: #fecaca; }
+    }
+
+    /* Help overlay */
+    .shortcuts-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0,0,0,0.5);
+    }
+    .shortcuts-overlay.hidden {
+        display: none !important;
+    }
+    .shortcuts-overlay .shortcuts-panel {
+        background: white;
+        border-radius: 0.75rem;
+        padding: 1.5rem 2rem;
+        max-width: 520px;
+        width: 90%;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+    }
+    .shortcuts-overlay h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: 0.75rem; }
+    .shortcuts-overlay table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .shortcuts-overlay th { text-align: left; padding: 0.25rem 0.5rem; color: #6b7280; font-weight: 600; border-bottom: 1px solid #e5e7eb; }
+    .shortcuts-overlay td { padding: 0.25rem 0.5rem; }
+    .shortcuts-overlay kbd {
+        display: inline-block;
+        padding: 0.1rem 0.4rem;
+        font-size: 0.8rem;
+        font-family: monospace;
+        background: #f3f4f6;
+        border: 1px solid #d1d5db;
+        border-radius: 0.25rem;
+        box-shadow: 0 1px 0 #d1d5db;
+    }
 </style>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    initializeKeyboardNavigation();
-    initializeStatusFilter();
     initializeCommentSystem();
+    initializeCursorNavigation();
+    initializeStatusFilter();
 });
 
 function showLoadingIndicator() {
     document.getElementById('loading-overlay').classList.remove('hidden');
 }
 
+// Execute fn after the browser has painted (ensures loading overlay is visible before navigation)
+function afterOverlayPaint(fn) {
+    requestAnimationFrame(function() { requestAnimationFrame(fn); });
+}
+
 /* ===== Comment System ===== */
+// Globals exposed for cursor navigation
+var _showCommentForm = null;
+var _hideCommentForm = null;
+var _clearLineSelection = null;
+var _highlightRange = null;
+var _isCommentFormVisible = null;
+
 function initializeCommentSystem() {
     var diffTable = document.querySelector('.diff-table');
     if (!diffTable) return;
@@ -384,7 +502,6 @@ function initializeCommentSystem() {
     var dragCurrentLine = 0;
 
     // Resolve a valid line number and side from a clicked line-number cell.
-    // When the clicked cell has no number (0), falls back to the other side.
     function resolveLineInfo(cell) {
         var lineNum = parseInt(cell.getAttribute('data-line-num'), 10) || 0;
         var side = cell.getAttribute('data-side') || 'right';
@@ -392,7 +509,6 @@ function initializeCommentSystem() {
         if (lineNum <= 0) {
             var row = cell.closest('tr');
             if (!row) return null;
-            // Try the opposite side's number
             var otherAttr = (side === 'right') ? 'data-left-num' : 'data-right-num';
             var otherSide = (side === 'right') ? 'left' : 'right';
             lineNum = parseInt(row.getAttribute(otherAttr), 10) || 0;
@@ -506,7 +622,19 @@ function initializeCommentSystem() {
         clearLineSelection();
     }
 
+    function isCommentFormVisible() {
+        return !commentFormContainer.classList.contains('hidden');
+    }
+
     cfCancel.addEventListener('click', hideCommentForm);
+
+    // Ctrl+Enter to save comment from textarea
+    cfBody.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            cfForm.requestSubmit();
+        }
+    });
 
     // Add comment form — use fetch to avoid page jump to top
     cfForm.addEventListener('submit', function(e) {
@@ -514,34 +642,27 @@ function initializeCommentSystem() {
         var submitBtn = cfForm.querySelector('[type="submit"]');
         if (submitBtn.disabled) return;
         submitBtn.disabled = true;
-        var originalText = submitBtn.textContent;
+        var originalText = submitBtn.innerHTML;
         submitBtn.textContent = 'Saving...';
         var action = cfForm.getAttribute('action');
         var formData = new URLSearchParams(new FormData(cfForm));
+        saveCursorToHash();
         fetch(action, { method: 'POST', body: formData }).then(function(resp) {
             if (resp.ok) {
                 window.location.reload();
             } else {
                 submitBtn.disabled = false;
-                submitBtn.textContent = originalText;
+                submitBtn.innerHTML = originalText;
                 alert('Failed to save comment (status ' + resp.status + '). Please try again.');
             }
         }).catch(function() {
             submitBtn.disabled = false;
-            submitBtn.textContent = originalText;
+            submitBtn.innerHTML = originalText;
             alert('Network error — comment was not saved.');
         });
     });
 
-    // Close comment form on Escape
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') {
-            hideCommentForm();
-        }
-    });
-
     // Handle delete forms — convert POST with _method=DELETE to proper behavior
-    // Since HTML forms can't send DELETE, we intercept and use fetch
     document.querySelectorAll('.delete-comment-form').forEach(function(form) {
         form.addEventListener('submit', function(e) {
             e.preventDefault();
@@ -549,6 +670,7 @@ function initializeCommentSystem() {
             if (submitBtn && submitBtn.disabled) return;
             if (submitBtn) submitBtn.disabled = true;
             var action = form.getAttribute('action');
+            saveCursorToHash();
             fetch(action, { method: 'DELETE' }).then(function(resp) {
                 if (resp.ok) {
                     window.location.reload();
@@ -562,57 +684,584 @@ function initializeCommentSystem() {
             });
         });
     });
+
+    // Expose globals for cursor navigation
+    _showCommentForm = showCommentForm;
+    _hideCommentForm = hideCommentForm;
+    _clearLineSelection = clearLineSelection;
+    _highlightRange = highlightRange;
+    _isCommentFormVisible = isCommentFormVisible;
 }
 
-/* ===== Keyboard Navigation ===== */
-function initializeKeyboardNavigation() {
-    document.addEventListener('keydown', function(event) {
-        // Don't intercept when typing in inputs
-        if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA' || event.target.tagName === 'SELECT') {
+/* ===== Cursor position save/restore via URL hash ===== */
+function saveCursorToHash() {
+    if (typeof _cursorIndex !== 'undefined' && _cursorIndex >= 0) {
+        var hash = 'cursor=' + _cursorIndex + '&side=' + (_cursorSide || 'right');
+        history.replaceState(null, '', '#' + hash);
+    }
+}
+
+function restoreCursorFromHash() {
+    var hash = window.location.hash.replace(/^#/, '');
+    if (!hash) return null;
+    var params = new URLSearchParams(hash);
+    var idx = parseInt(params.get('cursor'), 10);
+    var side = params.get('side') || 'right';
+    if (isNaN(idx) || idx < 0) return null;
+    // Clean hash after reading
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    return { index: idx, side: side };
+}
+
+/* ===== Dynamic footer hints ===== */
+function updateFooterHints(text) {
+    var el = document.getElementById('keyboard-hints');
+    if (el) el.textContent = text;
+}
+
+/* ===== Shortcuts overlay ===== */
+function toggleShortcutsOverlay() {
+    var overlay = document.getElementById('shortcuts-overlay');
+    if (!overlay) return;
+    overlay.classList.toggle('hidden');
+}
+
+/* ===== Cursor Navigation ===== */
+var _cursorIndex = -1;
+var _cursorSide = 'right';
+var _selectionAnchor = -1; // -1 = no selection active
+var _prevCursorIndex = -1; // tracks previous cursor position for efficient DOM updates
+var _deleteConfirming = false;
+var _deleteTarget = null;
+var _pendingG = false;
+var _pendingGTimer = null;
+
+function initializeCursorNavigation() {
+    // Wire up shortcuts overlay close button
+    var overlayClose = document.getElementById('shortcuts-close');
+    if (overlayClose) {
+        overlayClose.addEventListener('click', function() {
+            document.getElementById('shortcuts-overlay').classList.add('hidden');
+        });
+    }
+
+    var diffTable = document.querySelector('.diff-table');
+    var diffLines = diffTable ? Array.from(diffTable.querySelectorAll('.diff-line')) : [];
+
+    // Restore cursor from hash if available
+    if (diffLines.length > 0) {
+        var saved = restoreCursorFromHash();
+        if (saved && saved.index < diffLines.length) {
+            _cursorIndex = saved.index;
+            _cursorSide = saved.side;
+            applyCursor(diffLines);
+            diffLines[_cursorIndex].scrollIntoView({ behavior: 'auto', block: 'center' });
+        }
+    }
+
+    // Helper: get effective side for a line (auto-detect for add/del, cursorSide for context)
+    function getEffectiveSide(row) {
+        var type = row.getAttribute('data-line-type');
+        if (type === 'addition') return 'right';
+        if (type === 'deletion') return 'left';
+        return _cursorSide;
+    }
+
+    // Helper: get the line number from current cursor row for the effective side
+    function getCursorLineNum(row, side) {
+        var attr = (side === 'left') ? 'data-left-num' : 'data-right-num';
+        return parseInt(row.getAttribute(attr), 10) || 0;
+    }
+
+    // Apply cursor visual to diffLines[_cursorIndex]
+    function applyCursor(lines) {
+        // Clear previous cursor (O(1) instead of O(n))
+        if (_prevCursorIndex >= 0 && _prevCursorIndex < lines.length) {
+            var prevRow = lines[_prevCursorIndex];
+            prevRow.classList.remove('diff-line-cursor');
+            prevRow.querySelectorAll('.diff-line-num').forEach(function(cell) {
+                cell.classList.remove('cursor-side-active');
+            });
+        }
+        // Also clear current row in case side changed
+        if (_cursorIndex >= 0 && _cursorIndex < lines.length && _cursorIndex !== _prevCursorIndex) {
+            var curRow = lines[_cursorIndex];
+            curRow.classList.remove('diff-line-cursor');
+            curRow.querySelectorAll('.diff-line-num').forEach(function(cell) {
+                cell.classList.remove('cursor-side-active');
+            });
+        }
+        _prevCursorIndex = _cursorIndex;
+        if (_cursorIndex < 0 || _cursorIndex >= lines.length) return;
+        var row = lines[_cursorIndex];
+        row.classList.add('diff-line-cursor');
+        // Highlight the active side's line number cell
+        var effSide = getEffectiveSide(row);
+        var sideCell = row.querySelector('.diff-line-num[data-side="' + effSide + '"]');
+        if (sideCell) sideCell.classList.add('cursor-side-active');
+        updateFooterForState();
+    }
+
+    // Update selection highlight (yellow) for range _selectionAnchor .. _cursorIndex
+    function applySelection(lines) {
+        if (_clearLineSelection) _clearLineSelection();
+        if (_selectionAnchor < 0 || _cursorIndex < 0) return;
+        var lo = Math.min(_selectionAnchor, _cursorIndex);
+        var hi = Math.max(_selectionAnchor, _cursorIndex);
+        for (var i = lo; i <= hi; i++) {
+            lines[i].classList.add('line-selected');
+        }
+    }
+
+    // Update footer hints based on current state
+    function updateFooterForState() {
+        if (_deleteConfirming) {
+            updateFooterHints('[y] Confirm delete [Esc] Cancel');
             return;
         }
-        
-        // File navigation with arrow keys
-        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-            event.preventDefault();
-            
-            if (event.key === 'ArrowLeft' && document.getElementById('prev-file-link')) {
-                showLoadingIndicator();
-                setTimeout(function() { document.getElementById('prev-file-link').click(); }, 50);
-            } else if (event.key === 'ArrowRight' && document.getElementById('next-file-link')) {
-                showLoadingIndicator();
-                setTimeout(function() { document.getElementById('next-file-link').click(); }, 50);
+        if (_isCommentFormVisible && _isCommentFormVisible()) {
+            updateFooterHints('[Ctrl+Enter] Save comment [Esc] Cancel');
+            return;
+        }
+        if (_cursorIndex >= 0 && diffLines.length > 0) {
+            var row = diffLines[_cursorIndex];
+            var hasComment = hasCommentOnLine(row);
+            var parts = ['[j/k] Move', '[c] Comment'];
+            if (_selectionAnchor >= 0) parts[0] = '[J/K] Extend';
+            if (hasComment) parts.push('[x] Resolve', '[d] Delete');
+            parts.push('[a/r/s] Review', '[?] Help');
+            updateFooterHints(parts.join('  '));
+        } else {
+            updateFooterHints('[j/k] Navigate [?] Shortcuts [a] Approve [r] Reject [s] Skip [h/l] Prev/Next file');
+        }
+    }
+
+    // Check if a diff-line row has comment rows after it
+    function hasCommentOnLine(row) {
+        var next = row.nextElementSibling;
+        if (next && next.classList.contains('diff-comment-row')) {
+            return true;
+        }
+        return false;
+    }
+
+    // Get comment rows for a given diff-line
+    function getCommentRows(row) {
+        var comments = [];
+        var next = row.nextElementSibling;
+        while (next && next.classList.contains('diff-comment-row')) {
+            comments.push(next);
+            next = next.nextElementSibling;
+        }
+        return comments;
+    }
+
+    // Get the first actionable comment row (first open, or first resolved if all resolved)
+    function getFirstComment(row) {
+        var comments = getCommentRows(row);
+        if (comments.length === 0) return null;
+        // Prefer first open comment
+        for (var i = 0; i < comments.length; i++) {
+            if (!comments[i].classList.contains('diff-comment-resolved')) return comments[i];
+        }
+        return comments[0]; // all resolved, return first
+    }
+
+    // Find next diff-line index that has comments (forward from current)
+    function findNextCommentIndex(fromIdx, direction) {
+        var len = diffLines.length;
+        if (len === 0) return -1;
+        var start = (direction > 0) ? (fromIdx + 1) : (fromIdx - 1);
+        for (var i = start; direction > 0 ? (i < len) : (i >= 0); i += direction) {
+            if (hasCommentOnLine(diffLines[i])) return i;
+        }
+        // Wrap around
+        var wrapStart = (direction > 0) ? 0 : (len - 1);
+        var wrapEnd = (direction > 0) ? fromIdx : (fromIdx);
+        for (var j = wrapStart; direction > 0 ? (j <= wrapEnd) : (j >= wrapEnd); j += direction) {
+            if (hasCommentOnLine(diffLines[j])) return j;
+        }
+        return -1;
+    }
+
+    // Move cursor
+    function moveCursor(delta) {
+        if (diffLines.length === 0) return;
+        if (_cursorIndex < 0) {
+            _cursorIndex = (delta > 0) ? 0 : diffLines.length - 1;
+        } else {
+            _cursorIndex = Math.max(0, Math.min(diffLines.length - 1, _cursorIndex + delta));
+        }
+        _selectionAnchor = -1;
+        if (_clearLineSelection) _clearLineSelection();
+        applyCursor(diffLines);
+        diffLines[_cursorIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Extend selection
+    function extendSelection(delta) {
+        if (diffLines.length === 0 || _cursorIndex < 0) return;
+        if (_selectionAnchor < 0) _selectionAnchor = _cursorIndex;
+        _cursorIndex = Math.max(0, Math.min(diffLines.length - 1, _cursorIndex + delta));
+        applyCursor(diffLines);
+        applySelection(diffLines);
+        diffLines[_cursorIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Open comment form at cursor/selection
+    function openCommentAtCursor() {
+        if (_cursorIndex < 0 || !_showCommentForm) return;
+        var row = diffLines[_cursorIndex];
+        var effSide = getEffectiveSide(row);
+
+        var startIdx = _cursorIndex;
+        var endIdx = _cursorIndex;
+        if (_selectionAnchor >= 0) {
+            startIdx = Math.min(_selectionAnchor, _cursorIndex);
+            endIdx = Math.max(_selectionAnchor, _cursorIndex);
+        }
+
+        // Get line numbers for start and end
+        var startRow = diffLines[startIdx];
+        var endRow = diffLines[endIdx];
+        var startNum = getCursorLineNum(startRow, getEffectiveSide(startRow));
+        var endNum = getCursorLineNum(endRow, getEffectiveSide(endRow));
+        if (startNum <= 0 || endNum <= 0) return;
+
+        // Highlight the selection range visually
+        if (_clearLineSelection) _clearLineSelection();
+        if (_highlightRange) _highlightRange(startNum, endNum, effSide);
+
+        _showCommentForm(Math.min(startNum, endNum), Math.max(startNum, endNum), effSide, null);
+        updateFooterForState();
+    }
+
+    // Resolve/reopen first comment on cursor line
+    function resolveCommentAtCursor() {
+        if (_cursorIndex < 0) return;
+        var comment = getFirstComment(diffLines[_cursorIndex]);
+        if (!comment) return;
+        var resolveBtn = comment.querySelector('[data-testid^="btn-comment-resolve"], [data-testid^="btn-comment-reopen"]');
+        if (!resolveBtn) return;
+        var form = resolveBtn.closest('form');
+        var action = form.getAttribute('action');
+        saveCursorToHash();
+        showLoadingIndicator();
+        fetch(action, { method: 'POST' }).then(function(resp) {
+            if (resp.ok) {
+                window.location.reload();
+            } else {
+                document.getElementById('loading-overlay').classList.add('hidden');
+                alert('Failed to resolve/reopen comment (status ' + resp.status + ').');
+            }
+        }).catch(function() {
+            document.getElementById('loading-overlay').classList.add('hidden');
+            alert('Network error — comment was not updated.');
+        });
+    }
+
+    // Start delete confirmation
+    function startDeleteConfirm() {
+        if (_cursorIndex < 0) return;
+        var comment = getFirstComment(diffLines[_cursorIndex]);
+        if (!comment) return;
+        _deleteConfirming = true;
+        _deleteTarget = comment;
+        comment.classList.add('comment-delete-target');
+        // Also flash the parent diff-line
+        diffLines[_cursorIndex].classList.add('comment-delete-target');
+        updateFooterForState();
+    }
+
+    function cancelDeleteConfirm() {
+        if (_deleteTarget) {
+            _deleteTarget.classList.remove('comment-delete-target');
+        }
+        if (_cursorIndex >= 0 && _cursorIndex < diffLines.length) {
+            diffLines[_cursorIndex].classList.remove('comment-delete-target');
+        }
+        _deleteConfirming = false;
+        _deleteTarget = null;
+        updateFooterForState();
+    }
+
+    function confirmDelete() {
+        if (!_deleteTarget) return;
+        var deleteBtn = _deleteTarget.querySelector('[data-testid^="btn-comment-delete"]');
+        if (!deleteBtn) return;
+        // Clean up visual state before triggering delete
+        _deleteTarget.classList.remove('comment-delete-target');
+        if (_cursorIndex >= 0 && _cursorIndex < diffLines.length) {
+            diffLines[_cursorIndex].classList.remove('comment-delete-target');
+        }
+        saveCursorToHash();
+        // Trigger the delete form submit (which uses fetch)
+        var form = deleteBtn.closest('.delete-comment-form');
+        if (form) {
+            form.requestSubmit();
+        }
+        _deleteConfirming = false;
+        _deleteTarget = null;
+    }
+
+    // gg handling
+    function handleG(key) {
+        if (key === 'g') {
+            if (_pendingG) {
+                // gg → jump to first line
+                clearPendingG();
+                if (diffLines.length > 0) {
+                    _cursorIndex = 0;
+                    _selectionAnchor = -1;
+                    if (_clearLineSelection) _clearLineSelection();
+                    applyCursor(diffLines);
+                    diffLines[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                return true;
+            } else {
+                _pendingG = true;
+                _pendingGTimer = setTimeout(function() { _pendingG = false; }, 500);
+                return true;
             }
         }
-        
-        // Review shortcuts (a/r/s)
-        var selectedFile = document.querySelector('form[action*="status=approved"]');
-        if (selectedFile) {
+        return false;
+    }
+
+    function clearPendingG() {
+        _pendingG = false;
+        if (_pendingGTimer) { clearTimeout(_pendingGTimer); _pendingGTimer = null; }
+    }
+
+    // Main keydown handler
+    document.addEventListener('keydown', function(event) {
+        var inTextInput = (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA' || event.target.tagName === 'SELECT');
+
+        // Escape always works — priority-ordered
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            // 1. Shortcuts overlay
+            var overlay = document.getElementById('shortcuts-overlay');
+            if (overlay && !overlay.classList.contains('hidden')) {
+                overlay.classList.add('hidden');
+                return;
+            }
+            // 2. Delete confirmation
+            if (_deleteConfirming) {
+                cancelDeleteConfirm();
+                return;
+            }
+            // 3. Comment form (works even in textarea)
+            if (_isCommentFormVisible && _isCommentFormVisible()) {
+                _hideCommentForm();
+                updateFooterForState();
+                return;
+            }
+            // 4. Clear selection
+            if (_selectionAnchor >= 0) {
+                _selectionAnchor = -1;
+                if (_clearLineSelection) _clearLineSelection();
+                applyCursor(diffLines);
+                return;
+            }
+            // 5. Deactivate cursor
+            if (_cursorIndex >= 0) {
+                _cursorIndex = -1;
+                applyCursor(diffLines);
+                return;
+            }
+            return;
+        }
+
+        // Skip all other keys when typing in inputs
+        if (inTextInput) return;
+
+        // ? — toggle shortcuts overlay
+        if (event.key === '?') {
+            event.preventDefault();
+            clearPendingG();
+            toggleShortcutsOverlay();
+            return;
+        }
+
+        // Delete confirmation mode: only y and Esc (Esc handled above)
+        if (_deleteConfirming) {
+            if (event.key === 'y') {
+                event.preventDefault();
+                confirmDelete();
+            } else {
+                cancelDeleteConfirm();
+            }
+            return;
+        }
+
+        // === Diff view keys (when diffTable exists) ===
+        if (diffLines.length > 0) {
+            // g/G handling
+            if (event.key === 'g' && !event.shiftKey) {
+                if (handleG('g')) { event.preventDefault(); return; }
+            } else {
+                clearPendingG();
+            }
+
+            if (event.key === 'G' && event.shiftKey) {
+                event.preventDefault();
+                _cursorIndex = diffLines.length - 1;
+                _selectionAnchor = -1;
+                if (_clearLineSelection) _clearLineSelection();
+                applyCursor(diffLines);
+                diffLines[_cursorIndex].scrollIntoView({ behavior: 'smooth', block: 'end' });
+                return;
+            }
+
+            // j/k — move cursor
+            if ((event.key === 'j' || event.key === 'ArrowDown') && !event.shiftKey) {
+                event.preventDefault();
+                moveCursor(1);
+                return;
+            }
+            if ((event.key === 'k' || event.key === 'ArrowUp') && !event.shiftKey) {
+                event.preventDefault();
+                moveCursor(-1);
+                return;
+            }
+
+            // Shift+j/k — extend selection
+            if ((event.key === 'J' || (event.key === 'ArrowDown' && event.shiftKey))) {
+                event.preventDefault();
+                extendSelection(1);
+                return;
+            }
+            if ((event.key === 'K' || (event.key === 'ArrowUp' && event.shiftKey))) {
+                event.preventDefault();
+                extendSelection(-1);
+                return;
+            }
+
+            // Tab — toggle side on context lines (always prevent default when cursor active)
+            if (event.key === 'Tab' && _cursorIndex >= 0) {
+                event.preventDefault();
+                var curRow = diffLines[_cursorIndex];
+                if (curRow.getAttribute('data-line-type') === 'context') {
+                    _cursorSide = (_cursorSide === 'right') ? 'left' : 'right';
+                    applyCursor(diffLines);
+                }
+                return;
+            }
+
+            // c — open comment
+            if (event.key === 'c' && !event.ctrlKey && !event.metaKey) {
+                event.preventDefault();
+                openCommentAtCursor();
+                return;
+            }
+
+            // x — resolve/reopen
+            if (event.key === 'x') {
+                if (_cursorIndex >= 0 && hasCommentOnLine(diffLines[_cursorIndex])) {
+                    event.preventDefault();
+                    resolveCommentAtCursor();
+                    return;
+                }
+            }
+
+            // d — delete (with confirmation)
+            if (event.key === 'd' && !event.ctrlKey && !event.metaKey) {
+                if (_cursorIndex >= 0 && hasCommentOnLine(diffLines[_cursorIndex])) {
+                    event.preventDefault();
+                    startDeleteConfirm();
+                    return;
+                }
+            }
+
+            // ] — next comment
+            if (event.key === ']') {
+                event.preventDefault();
+                var fromIdx = (_cursorIndex >= 0) ? _cursorIndex : -1;
+                var nextIdx = findNextCommentIndex(fromIdx, 1);
+                if (nextIdx >= 0) {
+                    _cursorIndex = nextIdx;
+                    _selectionAnchor = -1;
+                    if (_clearLineSelection) _clearLineSelection();
+                    applyCursor(diffLines);
+                    diffLines[_cursorIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+                return;
+            }
+            // [ — prev comment
+            if (event.key === '[') {
+                event.preventDefault();
+                var fromIdxP = (_cursorIndex >= 0) ? _cursorIndex : diffLines.length;
+                var prevIdx = findNextCommentIndex(fromIdxP, -1);
+                if (prevIdx >= 0) {
+                    _cursorIndex = prevIdx;
+                    _selectionAnchor = -1;
+                    if (_clearLineSelection) _clearLineSelection();
+                    applyCursor(diffLines);
+                    diffLines[_cursorIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+                return;
+            }
+        }
+
+        // h/l and ArrowLeft/ArrowRight — prev/next file
+        if (event.key === 'h' || event.key === 'ArrowLeft') {
+            if (document.getElementById('prev-file-link')) {
+                event.preventDefault();
+                showLoadingIndicator();
+                afterOverlayPaint(function() { document.getElementById('prev-file-link').click(); });
+                return;
+            }
+        }
+        if (event.key === 'l' || event.key === 'ArrowRight') {
+            if (document.getElementById('next-file-link')) {
+                event.preventDefault();
+                showLoadingIndicator();
+                afterOverlayPaint(function() { document.getElementById('next-file-link').click(); });
+                return;
+            }
+        }
+
+        // S (shift+s) — submit review
+        if (event.key === 'S' && event.shiftKey) {
+            var submitBtn = document.querySelector('[data-testid="btn-submit-review"]');
+            if (submitBtn) {
+                event.preventDefault();
+                submitBtn.closest('form').submit();
+                return;
+            }
+        }
+
+        // Review shortcuts (a/r/s) — only in diff file view
+        var approveForm = document.querySelector('form[action*="status=approved"]');
+        if (approveForm) {
             if (event.key === 'a' && !event.ctrlKey && !event.metaKey) {
                 event.preventDefault();
                 showLoadingIndicator();
-                setTimeout(function() { document.querySelector('form[action*="status=approved"]').submit(); }, 50);
-            } else if (event.key === 'r' && !event.ctrlKey && !event.metaKey) {
+                afterOverlayPaint(function() { document.querySelector('form[action*="status=approved"]').submit(); });
+                return;
+            }
+            if (event.key === 'r' && !event.ctrlKey && !event.metaKey) {
                 event.preventDefault();
                 showLoadingIndicator();
-                setTimeout(function() { document.querySelector('form[action*="status=rejected"]').submit(); }, 50);
-            } else if (event.key === 's' && !event.ctrlKey && !event.metaKey) {
+                afterOverlayPaint(function() { document.querySelector('form[action*="status=rejected"]').submit(); });
+                return;
+            }
+            if (event.key === 's' && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
                 event.preventDefault();
                 showLoadingIndicator();
-                setTimeout(function() { document.querySelector('form[action*="status=skipped"]').submit(); }, 50);
+                afterOverlayPaint(function() { document.querySelector('form[action*="status=skipped"]').submit(); });
+                return;
             }
         }
-        
-        // File list keyboard navigation
-        if (document.getElementById('files-list')) {
-            var filesList = document.getElementById('files-list');
+
+        // File list keyboard navigation (j/k/Enter)
+        var filesList = document.getElementById('files-list');
+        if (filesList) {
             var files = filesList.querySelectorAll('li:not(.hidden)');
-            
             if (files.length === 0) return;
-            
-            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+
+            if (event.key === 'j' || event.key === 'ArrowDown' || event.key === 'k' || event.key === 'ArrowUp') {
                 event.preventDefault();
-                
                 var currentIndex = -1;
                 for (var i = 0; i < files.length; i++) {
                     if (files[i].classList.contains('bg-gray-100')) {
@@ -621,33 +1270,33 @@ function initializeKeyboardNavigation() {
                         break;
                     }
                 }
-                
                 var newIndex = currentIndex;
-                if (event.key === 'ArrowDown') {
+                if (event.key === 'j' || event.key === 'ArrowDown') {
                     newIndex = (currentIndex + 1) % files.length;
                 } else {
                     newIndex = (currentIndex - 1 + files.length) % files.length;
                 }
-                
                 files[newIndex].classList.add('bg-gray-100');
                 files[newIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                return;
             }
-            
+
             if (event.key === 'Enter') {
                 for (var j = 0; j < files.length; j++) {
                     if (files[j].classList.contains('bg-gray-100')) {
                         var viewLink = files[j].querySelector('a');
                         if (viewLink) {
                             showLoadingIndicator();
-                            setTimeout(function() { viewLink.click(); }, 50);
+                            afterOverlayPaint(function() { viewLink.click(); });
                         }
                         break;
                     }
                 }
+                return;
             }
         }
     });
-    
+
     // Review form loading indicator
     var reviewForms = document.querySelectorAll('.review-form');
     reviewForms.forEach(function(form) {
@@ -655,27 +1304,30 @@ function initializeKeyboardNavigation() {
             event.preventDefault();
             showLoadingIndicator();
             var self = this;
-            setTimeout(function() { self.submit(); }, 50);
+            afterOverlayPaint(function() { self.submit(); });
         });
     });
-    
-    // Prev/Next file buttons
+
+    // Prev/Next file buttons (mouse click)
     var prevFileBtn = document.getElementById('prev-file');
     var nextFileBtn = document.getElementById('next-file');
-    
+
     if (prevFileBtn && document.getElementById('prev-file-link')) {
         prevFileBtn.addEventListener('click', function() {
             showLoadingIndicator();
-            setTimeout(function() { document.getElementById('prev-file-link').click(); }, 50);
+            afterOverlayPaint(function() { document.getElementById('prev-file-link').click(); });
         });
     }
-    
+
     if (nextFileBtn && document.getElementById('next-file-link')) {
         nextFileBtn.addEventListener('click', function() {
             showLoadingIndicator();
-            setTimeout(function() { document.getElementById('next-file-link').click(); }, 50);
+            afterOverlayPaint(function() { document.getElementById('next-file-link').click(); });
         });
     }
+
+    // Initial footer update
+    updateFooterForState();
 }
 
 /* ===== Status Filter ===== */

@@ -30,6 +30,20 @@ div[tabindex="0"]:focus {
     font-family: ui-monospace, monospace;
 }
 
+/* Key hint on dark backgrounds (e.g. Submit Review purple button) */
+.key-hint-light {
+    display: inline-block;
+    min-width: 1.5em;
+    padding: 0.1em 0.5em;
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 3px;
+    text-align: center;
+    font-size: 0.85em;
+    font-family: ui-monospace, monospace;
+    color: #fff;
+}
+
 /* Custom scrollbar for diff view */
 .diff-container::-webkit-scrollbar {
     width: 8px;
