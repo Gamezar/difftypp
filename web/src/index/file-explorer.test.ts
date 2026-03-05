@@ -610,3 +610,130 @@ describe('initializeFileExplorer', () => {
     vi.unstubAllGlobals()
   })
 })
+
+// ── Additional coverage tests ────────────────────────────────────
+
+describe('buildListingHtml — entries undefined guard', () => {
+  it('returns "No subdirectories found" when entries is undefined', () => {
+    const data = {
+      current_path: '/home',
+      parent_path: '/',
+      is_git_repo: false,
+      entries: undefined,
+    } as unknown as BrowseResponse
+    const html = buildListingHtml(data)
+    expect(html).toContain('No subdirectories found.')
+  })
+})
+
+describe('initializeFileExplorer — additional coverage', () => {
+  let ac: AbortController
+
+  beforeEach(() => {
+    ac = new AbortController()
+  })
+
+  afterEach(() => {
+    ac.abort()
+  })
+
+  it('returns immediately without throwing when DOM elements are missing', () => {
+    document.body.innerHTML = ''
+    expect(() => initializeFileExplorer({ signal: ac.signal })).not.toThrow()
+  })
+
+  it('displays error when fetch rejects at network level', async () => {
+    document.body.innerHTML = `
+      <input id="repo-path" type="text" value="" />
+      <button id="btn-browse">Browse</button>
+      <div id="browse-modal" style="display: none">
+        <button id="browse-close">x</button>
+        <div id="browse-breadcrumb"></div>
+        <div id="browse-listing"></div>
+        <span id="browse-selected-path"></span>
+        <button id="browse-select" disabled>Select</button>
+      </div>
+    `
+
+    const fetchSpy = vi
+      .fn()
+      .mockRejectedValue(new TypeError('Failed to fetch'))
+    vi.stubGlobal('fetch', fetchSpy)
+
+    initializeFileExplorer({ signal: ac.signal })
+    document.getElementById('btn-browse')!.click()
+
+    await vi.waitFor(() => {
+      const listing = document.getElementById('browse-listing')!
+      expect(listing.innerHTML).toContain('Error:')
+      expect(listing.innerHTML).toContain('Failed to fetch')
+    })
+
+    vi.unstubAllGlobals()
+  })
+
+  it('navigates to parent directory when clicking (..) item', async () => {
+    document.body.innerHTML = `
+      <input id="repo-path" type="text" value="" />
+      <button id="btn-browse">Browse</button>
+      <div id="browse-modal" style="display: none">
+        <button id="browse-close">x</button>
+        <div id="browse-breadcrumb"></div>
+        <div id="browse-listing"></div>
+        <span id="browse-selected-path"></span>
+        <button id="browse-select" disabled>Select</button>
+      </div>
+    `
+
+    const firstResponse: BrowseResponse = {
+      current_path: '/home/user',
+      parent_path: '/home',
+      is_git_repo: false,
+      entries: [
+        { name: 'projects', path: '/home/user/projects', is_git_repo: false },
+      ],
+    }
+    const secondResponse: BrowseResponse = {
+      current_path: '/home',
+      parent_path: '/',
+      is_git_repo: false,
+      entries: [
+        { name: 'user', path: '/home/user', is_git_repo: false },
+      ],
+    }
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(firstResponse),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(secondResponse),
+      })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    initializeFileExplorer({ signal: ac.signal })
+    document.getElementById('btn-browse')!.click()
+
+    await vi.waitFor(() => {
+      const listing = document.getElementById('browse-listing')!
+      expect(listing.innerHTML).toContain('browse-item-parent')
+    })
+
+    const parentItem = document.querySelector(
+      '.browse-item-parent'
+    ) as HTMLElement
+    parentItem.click()
+
+    await vi.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledTimes(2)
+    })
+
+    expect(fetchSpy).toHaveBeenLastCalledWith(
+      '/api/browse?path=' + encodeURIComponent('/home')
+    )
+
+    vi.unstubAllGlobals()
+  })
+})
