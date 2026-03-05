@@ -294,3 +294,10 @@ See what you're working on:
 codemap --diff
 codemap --diff --ref develop
 ```
+
+## Hard Rules
+
+### Permission Configuration (`opencode.json`)
+
+- **Threat-model every allow rule before proposing it.** For each bash permission pattern, answer: "What is the worst command this pattern could execute?" Commands that modify external state (e.g., `gh` writes to GitHub) or execute untrusted code (e.g., `npm install <pkg>` runs arbitrary postinstall scripts) must remain `"ask"`, not `"allow"`. Prefer exact-match + space-delimited patterns (`"npm ci"` + `"npm ci *"`) over wildcard-suffix patterns (`"npm ci*"`) to prevent unintended prefix matches.
+- **OpenCode parses commands into segments.** Pipes (`|`), `&&`, `;`, and `||` are each checked independently against permission rules — a chained `&& malicious` cannot bypass per-segment matching. Do not flag this as a risk. See [OpenCode permissions docs](https://opencode.ai/docs/permissions/).
