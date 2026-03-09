@@ -8,14 +8,14 @@
 
 import { showLoadingIndicator } from '../shared/loading'
 
-const BACK_STACK_KEY = 'difftypp-back-stack'
-const FILE_POSITIONS_KEY = 'difftypp-file-positions'
-const MAX_BACK_STACK = 20
-const HEADER_HEIGHT = 80
+export const BACK_STACK_KEY = 'difftypp-back-stack'
+export const FILE_POSITIONS_KEY = 'difftypp-file-positions'
+export const MAX_BACK_STACK = 20
+export const HEADER_HEIGHT = 80
 
 /* ===== Per-file scroll positions ===== */
 
-function getFilePositions(): Record<string, number> {
+export function getFilePositions(): Record<string, number> {
   try {
     const raw = sessionStorage.getItem(FILE_POSITIONS_KEY)
     return raw ? JSON.parse(raw) : {}
@@ -24,11 +24,11 @@ function getFilePositions(): Record<string, number> {
   }
 }
 
-function getFilePosition(file: string): number {
+export function getFilePosition(file: string): number {
   return getFilePositions()[file] || 0
 }
 
-function saveCurrentFilePosition(): void {
+export function saveCurrentFilePosition(): void {
   const params = new URLSearchParams(window.location.search)
   const file = params.get('file')
   if (!file) return
@@ -42,7 +42,7 @@ function saveCurrentFilePosition(): void {
 
 /* ===== Back stack (file names only) ===== */
 
-function getBackStack(): string[] {
+export function getBackStack(): string[] {
   try {
     const raw = sessionStorage.getItem(BACK_STACK_KEY)
     return raw ? JSON.parse(raw) : []
@@ -51,19 +51,19 @@ function getBackStack(): string[] {
   }
 }
 
-function saveBackStack(stack: string[]): void {
+export function saveBackStack(stack: string[]): void {
   if (stack.length > MAX_BACK_STACK) stack = stack.slice(stack.length - MAX_BACK_STACK)
   sessionStorage.setItem(BACK_STACK_KEY, JSON.stringify(stack))
 }
 
-function pushFileToStack(file: string | null): void {
+export function pushFileToStack(file: string | null): void {
   if (!file) return
   const stack = getBackStack()
   stack.push(file)
   saveBackStack(stack)
 }
 
-function updateBackButton(
+export function updateBackButton(
   backBtn: HTMLElement,
   backContainer: HTMLElement
 ): void {
@@ -80,7 +80,7 @@ function updateBackButton(
   }
 }
 
-function fileUrl(file: string): string {
+export function fileUrl(file: string): string {
   const params = new URLSearchParams(window.location.search)
   params.set('file', file)
   return window.location.pathname + '?' + params.toString()
@@ -98,7 +98,7 @@ function goBack(): void {
 
 /* ===== Scroll position helpers ===== */
 
-function getFirstVisibleLineNumber(): number {
+export function getFirstVisibleLineNumber(): number {
   const diffContent = document.getElementById('diff-content')
   if (!diffContent) return 0
 
@@ -116,7 +116,7 @@ function getFirstVisibleLineNumber(): number {
   return 0
 }
 
-function scrollToLine(lineNum: number): void {
+export function scrollToLine(lineNum: number): void {
   const diffContent = document.getElementById('diff-content')
   if (!diffContent) return
 

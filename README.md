@@ -17,6 +17,8 @@ diffty++ extends the original diffty with the following additions:
 - **Enhanced Diff Visualization**: Side-by-side and unified diff views with syntax highlighting
 - **Multi-Repository Support**: Select and switch between multiple repositories through the UI
 - **File Explorer**: Browse the filesystem visually to find and select repositories instead of typing paths
+- **Sidebar Navigation**: Persistent file list sidebar with status indicators (approved/rejected/skipped/unreviewed), click-to-navigate, and auto-redirect to the first changed file
+- **Back Navigation**: Stack-based file history with per-file scroll position tracking — press Backspace or click the back button to return to the previous file at the exact scroll position you left
 - **Review Workflow**: Mark files as approved, rejected, or skipped
 - **Keyboard-Centric Navigation**: Efficient keyboard shortcuts for all operations
 - **Review State Persistence**: Save and resume reviews across sessions
@@ -91,6 +93,7 @@ Then open http://localhost:10101 in your web browser. From there, you can:
 | `r` | Reject |
 | `s` | Skip |
 | `←/→` | Navigate files |
+| `Backspace` | Go back to previous file |
 
 ## How It Works
 
@@ -104,14 +107,17 @@ Click **Browse** next to the repository path input to open the file explorer. Th
 
 diffty++ includes comprehensive testing to ensure reliability:
 
-- **Unit Tests**: Tests for core functionality in each package (`git`, `storage`, `server`)
-- **Mock-Based Testing**: Interfaces are mocked to allow isolated testing
-- **HTTP Testing**: Server handlers are tested using Go's httptest package
+- **Go tests**: Unit tests for core functionality in each package (`git`, `storage`, `server`) with mock-based isolation and HTTP testing via Go's httptest package
+- **TypeScript tests**: Frontend unit tests using [Vitest](https://vitest.dev/) with jsdom for DOM testing — covers sidebar navigation, cursor persistence, comment system, keyboard navigation, and status filtering
 
-Run the tests with:
+Run the tests:
 
 ```bash
+# Go tests
 go test ./...
+
+# TypeScript tests
+cd web && npm test
 ```
 
 ## Contributing
