@@ -5,10 +5,12 @@
  * - Comment system (inline code review)
  * - Cursor navigation (vim-style keyboard nav)
  * - Status filter (file list filtering)
+ * - Sidebar navigation (file list sidebar with back button)
  */
 
 import { initializeCommentSystem } from './comment-system'
 import { CursorState, initializeCursorNavigation } from './cursor-navigation'
+import { initializeSidebar } from './sidebar'
 import { initializeStatusFilter } from './status-filter'
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -25,4 +27,5 @@ document.addEventListener('DOMContentLoaded', () => {
   cursorState = initializeCursorNavigation(commentApi)
 
   initializeStatusFilter()
+  initializeSidebar()
 })
