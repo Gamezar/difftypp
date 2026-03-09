@@ -13,6 +13,7 @@ import { CursorState, initializeCursorNavigation } from './cursor-navigation'
 import { initializePastReviews } from './past-reviews'
 import { initializeSidebar } from './sidebar'
 import { initializeStatusFilter } from './status-filter'
+import { initializeSyntaxHighlight } from './syntax-highlight'
 
 document.addEventListener('DOMContentLoaded', () => {
   // Cursor state is created by initializeCursorNavigation (phase 2).
@@ -30,4 +31,5 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeStatusFilter()
   initializeSidebar()
   initializePastReviews()
+  initializeSyntaxHighlight()
 })

@@ -136,7 +136,7 @@
 
                     {{ if .SelectedFileParsed }}
                     <div class="diff-table-wrapper overflow-x-auto">
-                        <table class="diff-table w-full font-mono text-sm border-collapse">
+                        <table class="diff-table w-full font-mono text-sm border-collapse" data-language="{{.SelectedFileLanguage}}">
                             {{ $filePath := .SelectedFile }}
                             {{ $fileComments := .FileComments }}
                             {{ $pastFileComments := .PastFileComments }}
@@ -593,6 +593,33 @@
     .diff-line-content { 
         line-height: 20px;
         tab-size: 4;
+    }
+    /* Syntax highlighting: preserve diff backgrounds over hljs theme */
+    .diff-line-content .hljs-keyword,
+    .diff-line-content .hljs-built_in,
+    .diff-line-content .hljs-type,
+    .diff-line-content .hljs-literal,
+    .diff-line-content .hljs-number,
+    .diff-line-content .hljs-string,
+    .diff-line-content .hljs-comment,
+    .diff-line-content .hljs-doctag,
+    .diff-line-content .hljs-attr,
+    .diff-line-content .hljs-attribute,
+    .diff-line-content .hljs-name,
+    .diff-line-content .hljs-tag,
+    .diff-line-content .hljs-selector-class,
+    .diff-line-content .hljs-selector-id,
+    .diff-line-content .hljs-title,
+    .diff-line-content .hljs-function,
+    .diff-line-content .hljs-variable,
+    .diff-line-content .hljs-params,
+    .diff-line-content .hljs-meta,
+    .diff-line-content .hljs-regexp,
+    .diff-line-content .hljs-symbol,
+    .diff-line-content .hljs-template-variable,
+    .diff-line-content .hljs-addition,
+    .diff-line-content .hljs-deletion {
+        background: transparent !important;
     }
     .diff-hunk-header td { border-top: 1px solid #e5e7eb; }
     
