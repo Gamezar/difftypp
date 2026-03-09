@@ -928,6 +928,12 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 	data["OpenCommentCount"] = openComments
 
 	if p.FilePath == "" {
+		// Auto-redirect to the first file if there are files to show
+		if len(files) > 0 {
+			redirectURL := buildDiffRedirectURL(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit, p.Mode, files[0]["Path"])
+			http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+			return
+		}
 		s.render(w, "diff.html", data)
 		return
 	}

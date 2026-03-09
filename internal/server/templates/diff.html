@@ -1,5 +1,36 @@
 {{define "diff.html"}}
-<div class="max-w-6xl mx-auto">
+<div class="diff-page-container {{ if .SelectedFile }}has-sidebar{{ end }}">
+    {{/* ===== LEFT FILE NAV SIDEBAR (only in single-file view) ===== */}}
+    {{ if .SelectedFile }}
+    <aside id="file-nav-sidebar" class="file-nav-sidebar" data-testid="file-nav-sidebar">
+        <div id="sidebar-back-container" class="sidebar-back hidden">
+            <a id="back-to-prev-file" class="sidebar-back-link" title="Back to previous file (Backspace)">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                <span id="back-label">Back</span>
+            </a>
+        </div>
+        <div class="sidebar-header">
+            <h3 class="text-sm font-semibold text-gray-700">Files <span class="text-gray-400">({{ len .Files }})</span></h3>
+        </div>
+        <ul class="sidebar-file-list">
+            {{range .Files}}
+            <li class="sidebar-file-item {{ if eq .Path $.SelectedFile }}active{{ end }}" data-status="{{ .Status }}">
+                <a href="/diff?repo={{urlquery $.RepoPath}}&source={{urlquery $.SourceBranch}}&target={{urlquery $.TargetBranch}}&source_commit={{urlquery $.SourceCommit}}&target_commit={{urlquery $.TargetCommit}}&mode={{urlquery $.DiffMode}}&file={{urlquery .Path}}"
+                   class="sidebar-file-link" title="{{ .Path }}">
+                    <span class="sidebar-status-dot
+                        {{ if eq .Status "approved" }}dot-approved
+                        {{ else if eq .Status "rejected" }}dot-rejected
+                        {{ else if eq .Status "skipped" }}dot-skipped
+                        {{ else }}dot-unreviewed{{ end }}"></span>
+                    <span class="sidebar-file-name">{{ .Path }}</span>
+                </a>
+            </li>
+            {{end}}
+        </ul>
+    </aside>
+    {{ end }}
+
+    <div class="diff-main-content">
     <div class="flex items-center gap-2 mb-6">
         {{ if .SelectedFile }}
             <a href="/diff?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&mode={{urlquery .DiffMode}}" class="text-blue-600 hover:underline">&larr; Back to Files</a>
@@ -351,9 +382,119 @@
             <p style="margin-top:0.75rem;font-size:0.8rem;color:#9ca3af">Press <kbd>?</kbd> to close</p>
         </div>
     </div>
-</div>
+    </div>{{/* close diff-main-content */}}
+</div>{{/* close diff-page-container */}}
 
 <style>
+    /* Page layout with sidebar */
+    .diff-page-container {
+        max-width: 72rem;
+        margin: 0 auto;
+    }
+    .diff-page-container.has-sidebar {
+        display: flex;
+        max-width: none;
+        gap: 0;
+    }
+    .diff-page-container.has-sidebar .diff-main-content {
+        flex: 1;
+        min-width: 0;
+        padding: 0 1rem;
+    }
+
+    /* Sidebar styles */
+    .file-nav-sidebar {
+        width: 280px;
+        min-width: 280px;
+        background: #fff;
+        border-right: 1px solid #e5e7eb;
+        height: calc(100vh - 140px);
+        position: sticky;
+        top: 80px;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+    .sidebar-header {
+        padding: 12px 16px;
+        border-bottom: 1px solid #e5e7eb;
+        position: sticky;
+        top: 0;
+        background: #fff;
+        z-index: 10;
+    }
+    .sidebar-file-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+    .sidebar-file-item {
+        border-bottom: 1px solid #f3f4f6;
+    }
+    .sidebar-file-item.active {
+        background: #eff6ff;
+        border-left: 3px solid #3b82f6;
+    }
+    .sidebar-file-link {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        color: #374151;
+        text-decoration: none;
+        font-size: 13px;
+        font-family: ui-monospace, monospace;
+    }
+    .sidebar-file-link:hover {
+        background: #f9fafb;
+    }
+    .sidebar-file-item.active .sidebar-file-link {
+        color: #1d4ed8;
+        font-weight: 500;
+    }
+    .sidebar-file-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        direction: rtl;
+        text-align: left;
+    }
+    .sidebar-status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+    .dot-unreviewed { background: #d1d5db; }
+    .dot-approved { background: #22c55e; }
+    .dot-rejected { background: #ef4444; }
+    .dot-skipped { background: #eab308; }
+
+    /* Back button in sidebar */
+    .sidebar-back {
+        border-bottom: 1px solid #e5e7eb;
+        padding: 8px 12px;
+        position: sticky;
+        top: 0;
+        background: #f9fafb;
+        z-index: 11;
+    }
+    .sidebar-back.hidden { display: none; }
+    .sidebar-back-link {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        background: #e5e7eb;
+        color: #374151;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        text-decoration: none;
+        transition: background 0.15s;
+    }
+    .sidebar-back-link:hover { background: #d1d5db; }
+
     /* Diff table styles */
     .diff-table { border-spacing: 0; }
     .diff-table td { vertical-align: top; }
