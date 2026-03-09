@@ -16,6 +16,9 @@ type Storage interface {
 	LoadReviewState(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit string) (*models.ReviewState, error)
 	SaveReview(review *models.Review, repoPath string) error
 	LoadReview(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit string) (*models.Review, error)
+	LoadReviewIndex(repoPath, sourceBranch, targetBranch string) (*models.ReviewIndex, error)
+	SaveReviewIndex(index *models.ReviewIndex, repoPath string) error
+	DeleteReviewData(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit string) error
 	SaveRepositories(repos []string) error
 	LoadRepositories() ([]string, error)
 }
@@ -226,4 +229,95 @@ func (s *JSONStorage) LoadReview(repoPath, sourceBranch, targetBranch, sourceCom
 	}
 
 	return &review, nil
+}
+
+// reviewIndexPath returns the file path for a branch-pair review index (pure computation, no side effects)
+func (s *JSONStorage) reviewIndexPath(repoPath, sourceBranch, targetBranch string) string {
+	safeRepoPath := sanitizeRepoPath(repoPath)
+	safeSrc := sanitizeRepoPath(sourceBranch)
+	safeTgt := sanitizeRepoPath(targetBranch)
+	return filepath.Join(s.baseStoragePath, "review-index", safeRepoPath, safeSrc, safeTgt, "index.json")
+}
+
+// LoadReviewIndex loads the review index for a branch pair
+func (s *JSONStorage) LoadReviewIndex(repoPath, sourceBranch, targetBranch string) (*models.ReviewIndex, error) {
+	storagePath := s.reviewIndexPath(repoPath, sourceBranch, targetBranch)
+
+	if _, err := os.Stat(storagePath); os.IsNotExist(err) {
+		return &models.ReviewIndex{
+			RepoPath:     repoPath,
+			SourceBranch: sourceBranch,
+			TargetBranch: targetBranch,
+			Reviews:      []models.ReviewIndexEntry{},
+		}, nil
+	}
+
+	data, err := os.ReadFile(storagePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read review index: %w", err)
+	}
+
+	var index models.ReviewIndex
+	if err := json.Unmarshal(data, &index); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal review index: %w", err)
+	}
+
+	return &index, nil
+}
+
+// SaveReviewIndex saves the review index for a branch pair
+func (s *JSONStorage) SaveReviewIndex(index *models.ReviewIndex, repoPath string) error {
+	storagePath := s.reviewIndexPath(repoPath, index.SourceBranch, index.TargetBranch)
+
+	if err := ensureDir(storagePath); err != nil {
+		return fmt.Errorf("failed to prepare review index directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(index, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal review index: %w", err)
+	}
+
+	if err := os.WriteFile(storagePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write review index: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteReviewData deletes a past review's data and removes it from the branch-pair index.
+// It removes the index entry first (dangling data is harmless; dangling index entries cause errors).
+func (s *JSONStorage) DeleteReviewData(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit string) error {
+	// Remove entry from index
+	index, err := s.LoadReviewIndex(repoPath, sourceBranch, targetBranch)
+	if err != nil {
+		return fmt.Errorf("failed to load review index for deletion: %w", err)
+	}
+
+	filtered := make([]models.ReviewIndexEntry, 0, len(index.Reviews))
+	for _, entry := range index.Reviews {
+		if entry.SourceCommit == sourceCommit && entry.TargetCommit == targetCommit {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	index.Reviews = filtered
+
+	if err := s.SaveReviewIndex(index, repoPath); err != nil {
+		return fmt.Errorf("failed to save updated review index: %w", err)
+	}
+
+	// Remove the review JSON file (best-effort — file may already be gone)
+	reviewFile := s.reviewPath(repoPath, sourceCommit, targetCommit)
+	if err := os.Remove(reviewFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete review file: %w", err)
+	}
+
+	// Remove the review-state JSON file (best-effort)
+	stateFile := s.reviewStatePath(repoPath, sourceCommit, targetCommit)
+	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
+		// Not fatal — state file is optional
+	}
+
+	return nil
 }

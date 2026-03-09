@@ -10,6 +10,7 @@
 
 import { initializeCommentSystem } from './comment-system'
 import { CursorState, initializeCursorNavigation } from './cursor-navigation'
+import { initializePastReviews } from './past-reviews'
 import { initializeSidebar } from './sidebar'
 import { initializeStatusFilter } from './status-filter'
 
@@ -28,4 +29,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initializeStatusFilter()
   initializeSidebar()
+  initializePastReviews()
 })
