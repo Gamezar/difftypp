@@ -10,6 +10,7 @@ diffty++ extends the original diffty with the following additions:
 
 - **Multi-mode diff comparison**: Compare branches, arbitrary commits, staged changes, or unstaged working tree modifications via a tabbed UI.
 - **Inline review comments**: GitHub PR-style inline comments with line selection, comment resolution, markdown export, and review submission flow.
+- **Past reviews sidebar**: Right-side panel showing previous review sessions for the same branch pair, with inline faded rendering of past comments on the current diff, "View original" links back to the original commit pair, and per-review or bulk deletion.
 - **File explorer**: Browse the filesystem to select repositories through a modal dialog with breadcrumb navigation, git repository detection, and directory filtering.
 
 ## Features
@@ -20,6 +21,7 @@ diffty++ extends the original diffty with the following additions:
 - **Sidebar Navigation**: Persistent file list sidebar with status indicators (approved/rejected/skipped/unreviewed), click-to-navigate, and auto-redirect to the first changed file
 - **Back Navigation**: Stack-based file history with per-file scroll position tracking — press Backspace or click the back button to return to the previous file at the exact scroll position you left
 - **Review Workflow**: Mark files as approved, rejected, or skipped
+- **Past Reviews**: View previous review sessions for the same branch pair in a right-side sidebar, with past comments rendered inline (faded) on the current diff. Navigate back to the original diff via "View original", or delete individual/all past reviews.
 - **Keyboard-Centric Navigation**: Efficient keyboard shortcuts for all operations
 - **Review State Persistence**: Save and resume reviews across sessions
 - **Git Integration**: Works with any Git repository
@@ -38,6 +40,10 @@ diffty++ extends the original diffty with the following additions:
 ### Diff View
 
 ![Diff view with inline additions and deletions](./docs/showcase/diff.png)
+
+### Past Reviews
+
+![Three-column layout with file sidebar, diff with inline past comments, and past reviews panel](./docs/showcase/past-reviews.png)
 
 ## Installation
 
@@ -108,7 +114,8 @@ Click **Browse** next to the repository path input to open the file explorer. Th
 diffty++ includes comprehensive testing to ensure reliability:
 
 - **Go tests**: Unit tests for core functionality in each package (`git`, `storage`, `server`) with mock-based isolation and HTTP testing via Go's httptest package
-- **TypeScript tests**: Frontend unit tests using [Vitest](https://vitest.dev/) with jsdom for DOM testing — covers sidebar navigation, cursor persistence, comment system, keyboard navigation, and status filtering
+- **TypeScript tests**: Frontend unit tests using [Vitest](https://vitest.dev/) with jsdom for DOM testing — covers sidebar navigation, cursor persistence, comment system, keyboard navigation, status filtering, and past reviews error handling
+- **End-to-end tests**: Browser-based tests using [Playwright](https://playwright.dev/) that spin up a real diffty++ server and exercise full workflows — past reviews lifecycle across branches, staged, unstaged, and commits modes
 
 Run the tests:
 
@@ -118,6 +125,9 @@ go test ./...
 
 # TypeScript tests
 cd web && npm test
+
+# End-to-end tests (requires Playwright browsers installed)
+cd web && npm run test:e2e
 ```
 
 ## Contributing

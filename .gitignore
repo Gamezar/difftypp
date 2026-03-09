@@ -37,6 +37,6 @@ web/node_modules/
 # Playwright test artifacts
 web/test-results/
 web/playwright-report/
-*.png
+e2e-*.png
 
 # Serena - internal .serena/.gitignore manages what to track
