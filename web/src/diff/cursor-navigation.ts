@@ -65,10 +65,10 @@ export function computeFooterHints(opts: {
     const parts = ['[j/k] Move', '[c] Comment']
     if (opts.hasSelection) parts[0] = '[J/K] Extend'
     if (opts.hasCommentOnLine) parts.push('[x] Resolve', '[d] Delete')
-    parts.push('[a/r/s] Review', '[?] Help')
+    parts.push('[a/r/s] Review', '[Shift+Q] Back', '[?] Help')
     return parts.join('  ')
   }
-  return '[j/k] Navigate [?] Shortcuts [a] Approve [r] Reject [s] Skip [h/l] Prev/Next file'
+  return '[j/k] Navigate [?] Shortcuts [a] Approve [r] Reject [s] Skip [h/l] Prev/Next file [Shift+Q] Back'
 }
 
 /**
@@ -672,6 +672,21 @@ export function initializeCursorNavigation(
   }
 
   function handleFileNavKeys(event: KeyboardEvent): boolean {
+    // Shift+Q - back to compare selection
+    if (event.key === 'Q' && event.shiftKey) {
+      const backToCompareLink = document.getElementById(
+        'back-to-compare-link'
+      ) as HTMLElement | null
+      if (backToCompareLink) {
+        event.preventDefault()
+        showLoadingIndicator()
+        afterOverlayPaint(() => {
+          backToCompareLink.click()
+        })
+        return true
+      }
+    }
+
     // h/l and ArrowLeft/ArrowRight — prev/next file
     if (event.key === 'h' || event.key === 'ArrowLeft') {
       if (document.getElementById('prev-file-link')) {
