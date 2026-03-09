@@ -105,7 +105,7 @@ function getFirstVisibleLineNumber(): number {
   const rows = diffContent.querySelectorAll('.diff-line')
   for (let i = 0; i < rows.length; i++) {
     const rect = rows[i].getBoundingClientRect()
-    if (rect.top >= HEADER_HEIGHT) {
+    if (rect.bottom > HEADER_HEIGHT && rect.top < window.innerHeight) {
       const rightNum =
         parseInt(rows[i].getAttribute('data-right-num') || '', 10) || 0
       const leftNum =
@@ -155,7 +155,18 @@ export function initializeSidebar(): void {
   if (currentFile) {
     const savedLine = getFilePosition(currentFile)
     if (savedLine > 0) {
-      setTimeout(() => scrollToLine(savedLine), 100)
+      // Hide content to prevent visible scroll jump, scroll instantly, then reveal
+      const mainContent = document.querySelector('.diff-main-content') as HTMLElement
+      if (mainContent) {
+        mainContent.style.visibility = 'hidden'
+      }
+      scrollToLine(savedLine)
+      if (mainContent) {
+        // Use rAF to reveal after the browser has painted at the correct scroll position
+        requestAnimationFrame(() => {
+          mainContent.style.visibility = ''
+        })
+      }
     }
   }
 
