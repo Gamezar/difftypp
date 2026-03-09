@@ -33,7 +33,7 @@ diffty++ extends the original diffty with the following additions:
 
 ![Home page showing repository selection](./docs/showcase/home-page.png)
 
-### Past Reviews
+### Diff View
 
 ![Three-column layout with file sidebar, diff with inline past comments, and past reviews panel](./docs/showcase/past-reviews.png)
 
