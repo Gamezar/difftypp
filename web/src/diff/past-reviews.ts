@@ -31,7 +31,6 @@ export function showError(message: string): void {
   toast.className = 'past-review-error-toast'
   toast.textContent = message
   toast.setAttribute('role', 'alert')
-  toast.style.cursor = 'pointer'
   toast.title = 'Click to dismiss'
   // Inline styles so no extra CSS is needed
   Object.assign(toast.style, {
