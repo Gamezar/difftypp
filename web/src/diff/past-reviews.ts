@@ -4,12 +4,36 @@
  * Handles deletion of individual and all past review entries via the
  * DELETE /api/review/past and DELETE /api/reviews/past endpoints.
  * After a successful deletion the page is reloaded to reflect changes.
+ * Errors are shown to the user via a temporary toast notification.
  */
 
 function buildQueryString(params: Record<string, string>): string {
   return Object.entries(params)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&')
+}
+
+/** Show a temporary error toast that auto-dismisses after 4 seconds. */
+function showError(message: string): void {
+  const toast = document.createElement('div')
+  toast.className = 'past-review-error-toast'
+  toast.textContent = message
+  toast.setAttribute('role', 'alert')
+  // Inline styles so no extra CSS is needed
+  Object.assign(toast.style, {
+    position: 'fixed',
+    bottom: '1rem',
+    right: '1rem',
+    background: '#dc2626',
+    color: '#fff',
+    padding: '0.75rem 1rem',
+    borderRadius: '0.5rem',
+    fontSize: '0.875rem',
+    zIndex: '9999',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+  })
+  document.body.appendChild(toast)
+  setTimeout(() => toast.remove(), 4000)
 }
 
 function deletePastReview(btn: HTMLElement): void {
@@ -36,10 +60,10 @@ function deletePastReview(btn: HTMLElement): void {
       if (res.ok) {
         window.location.reload()
       } else {
-        console.warn('Failed to delete past review', res.status)
+        showError('Failed to delete past review. Please try again.')
       }
     })
-    .catch(err => console.warn('Network error deleting past review', err))
+    .catch(() => showError('Network error — could not delete past review.'))
 }
 
 function deleteAllPastReviews(btn: HTMLElement): void {
@@ -62,10 +86,10 @@ function deleteAllPastReviews(btn: HTMLElement): void {
       if (res.ok) {
         window.location.reload()
       } else {
-        console.warn('Failed to delete all past reviews', res.status)
+        showError('Failed to delete past reviews. Please try again.')
       }
     })
-    .catch(err => console.warn('Network error deleting all past reviews', err))
+    .catch(() => showError('Network error — could not delete past reviews.'))
 }
 
 export function initializePastReviews(): void {
