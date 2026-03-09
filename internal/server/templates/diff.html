@@ -34,7 +34,7 @@
     <div class="diff-main-content">
     <div class="flex items-center gap-2 mb-6">
         {{ if .SelectedFile }}
-            <a href="/compare?repo={{urlquery .RepoPath}}&mode={{urlquery .DiffMode}}" class="text-blue-600 hover:underline">&larr; Back to {{if eq .DiffMode "branches"}}Branch Selection{{else if eq .DiffMode "commits"}}Commit Selection{{else}}Compare{{end}}</a>
+            <a id="back-to-compare-link" href="/compare?repo={{urlquery .RepoPath}}&mode={{urlquery .DiffMode}}" class="text-blue-600 hover:underline">&larr; Back to {{if eq .DiffMode "branches"}}Branch Selection{{else if eq .DiffMode "commits"}}Commit Selection{{else}}Compare{{end}}</a>
         {{ else }}
             <a href="/compare?repo={{urlquery .RepoPath}}&mode={{urlquery .DiffMode}}" class="text-blue-600 hover:underline">&larr; Back to {{if eq .DiffMode "branches"}}Branch Selection{{else if eq .DiffMode "commits"}}Commit Selection{{else}}Compare{{end}}</a>
         {{ end }}
@@ -419,6 +419,7 @@
                 <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Move cursor down / up</td></tr>
                 <tr><td><kbd>Shift+j</kbd> / <kbd>Shift+k</kbd></td><td>Extend selection down / up</td></tr>
                 <tr><td><kbd>h</kbd> / <kbd>l</kbd></td><td>Previous / next file</td></tr>
+                <tr><td><kbd>Shift+Q</kbd></td><td>Back to selection</td></tr>
                 <tr><td><kbd>Tab</kbd></td><td>Toggle side (left/right) on context lines</td></tr>
                 <tr><td><kbd>gg</kbd></td><td>Jump to first line</td></tr>
                 <tr><td><kbd>G</kbd></td><td>Jump to last line</td></tr>

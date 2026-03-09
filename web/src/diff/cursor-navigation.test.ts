@@ -935,6 +935,30 @@ describe('initializeCursorNavigation with commentApi', () => {
       // Should not throw
       press('h')
     })
+
+    it('Shift+Q triggers back-to-compare link click', () => {
+      setupWithFileLinks()
+      const backLink = document.createElement('a')
+      backLink.id = 'back-to-compare-link'
+      backLink.href = '/compare?repo=%2Ftmp%2Frepo&mode=branches'
+      backLink.addEventListener('click', (e) => e.preventDefault())
+      document.body.appendChild(backLink)
+
+      initializeCursorNavigation(commentApi, { signal: ac.signal })
+
+      press('Q', { shiftKey: true })
+      const overlay = document.getElementById('loading-overlay')!
+      expect(overlay.classList.contains('hidden')).toBe(false)
+    })
+
+    it('Shift+Q does nothing when back link is absent', () => {
+      setupWithFileLinks()
+      initializeCursorNavigation(commentApi, { signal: ac.signal })
+
+      press('Q', { shiftKey: true })
+      const overlay = document.getElementById('loading-overlay')!
+      expect(overlay.classList.contains('hidden')).toBe(true)
+    })
   })
 
   // ── handleReviewKeys ──
