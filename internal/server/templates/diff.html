@@ -34,7 +34,7 @@
     <div class="diff-main-content">
     <div class="flex items-center gap-2 mb-6">
         {{ if .SelectedFile }}
-            <a href="/diff?repo={{urlquery .RepoPath}}&source={{urlquery .SourceBranch}}&target={{urlquery .TargetBranch}}&source_commit={{urlquery .SourceCommit}}&target_commit={{urlquery .TargetCommit}}&mode={{urlquery .DiffMode}}" class="text-blue-600 hover:underline">&larr; Back to Files</a>
+            <a href="/compare?repo={{urlquery .RepoPath}}&mode={{urlquery .DiffMode}}" class="text-blue-600 hover:underline">&larr; Back to {{if eq .DiffMode "branches"}}Branch Selection{{else if eq .DiffMode "commits"}}Commit Selection{{else}}Compare{{end}}</a>
         {{ else }}
             <a href="/compare?repo={{urlquery .RepoPath}}&mode={{urlquery .DiffMode}}" class="text-blue-600 hover:underline">&larr; Back to {{if eq .DiffMode "branches"}}Branch Selection{{else if eq .DiffMode "commits"}}Commit Selection{{else}}Compare{{end}}</a>
         {{ end }}
