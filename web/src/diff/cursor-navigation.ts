@@ -307,7 +307,7 @@ export function initializeCursorNavigation(
     updateFooterForState()
     diffLines[state.index].scrollIntoView({
       behavior: 'smooth',
-      block: 'nearest',
+      block: 'center',
     })
   }
 
@@ -320,7 +320,7 @@ export function initializeCursorNavigation(
     updateFooterForState()
     diffLines[state.index].scrollIntoView({
       behavior: 'smooth',
-      block: 'nearest',
+      block: 'center',
     })
   }
 

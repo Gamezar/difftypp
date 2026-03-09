@@ -354,6 +354,9 @@ describe('initializeCursorNavigation', () => {
 
   it('moves cursor down with j key', () => {
     setupDiffDOM()
+    const scrollSpy = vi
+      .spyOn(Element.prototype, 'scrollIntoView')
+      .mockImplementation(() => {})
     const state = initializeCursorNavigation(null, { signal: ac.signal })
     document.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'j', bubbles: true })
@@ -361,10 +364,16 @@ describe('initializeCursorNavigation', () => {
     expect(state.index).toBe(0)
     const row = document.querySelectorAll('.diff-line')[0]
     expect(row.classList.contains('diff-line-cursor')).toBe(true)
+    expect(scrollSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ block: 'center' })
+    )
   })
 
   it('moves cursor up with k key', () => {
     setupDiffDOM()
+    const scrollSpy = vi
+      .spyOn(Element.prototype, 'scrollIntoView')
+      .mockImplementation(() => {})
     const state = initializeCursorNavigation(null, { signal: ac.signal })
     // Move down twice first
     document.dispatchEvent(
@@ -378,6 +387,32 @@ describe('initializeCursorNavigation', () => {
       new KeyboardEvent('keydown', { key: 'k', bubbles: true })
     )
     expect(state.index).toBe(0)
+    expect(scrollSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ block: 'center' })
+    )
+  })
+
+  it('extends selection with centered scroll on Shift+J', () => {
+    setupDiffDOM()
+    const scrollSpy = vi
+      .spyOn(Element.prototype, 'scrollIntoView')
+      .mockImplementation(() => {})
+    const state = initializeCursorNavigation(null, { signal: ac.signal })
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'j', bubbles: true })
+    )
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'J',
+        shiftKey: true,
+        bubbles: true,
+      })
+    )
+    expect(state.selectionAnchor).toBe(0)
+    expect(state.index).toBe(1)
+    expect(scrollSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ block: 'center' })
+    )
   })
 
   it('does not move cursor below last line', () => {
