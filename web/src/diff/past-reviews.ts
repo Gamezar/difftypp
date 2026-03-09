@@ -13,12 +13,26 @@ function buildQueryString(params: Record<string, string>): string {
     .join('&')
 }
 
-/** Show a temporary error toast that auto-dismisses after 4 seconds. */
-function showError(message: string): void {
+/**
+ * Show a temporary error toast that auto-dismisses after 4 seconds.
+ * Only one toast is visible at a time — calling again replaces the previous one.
+ * The toast can also be dismissed manually by clicking it.
+ */
+let activeToast: HTMLElement | null = null
+
+export function showError(message: string): void {
+  // Remove any existing toast to prevent stacking
+  if (activeToast) {
+    activeToast.remove()
+    activeToast = null
+  }
+
   const toast = document.createElement('div')
   toast.className = 'past-review-error-toast'
   toast.textContent = message
   toast.setAttribute('role', 'alert')
+  toast.style.cursor = 'pointer'
+  toast.title = 'Click to dismiss'
   // Inline styles so no extra CSS is needed
   Object.assign(toast.style, {
     position: 'fixed',
@@ -31,9 +45,18 @@ function showError(message: string): void {
     fontSize: '0.875rem',
     zIndex: '9999',
     boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    cursor: 'pointer',
   })
+
+  const dismiss = () => {
+    toast.remove()
+    if (activeToast === toast) activeToast = null
+  }
+
+  toast.addEventListener('click', dismiss)
   document.body.appendChild(toast)
-  setTimeout(() => toast.remove(), 4000)
+  activeToast = toast
+  setTimeout(dismiss, 4000)
 }
 
 function deletePastReview(btn: HTMLElement): void {

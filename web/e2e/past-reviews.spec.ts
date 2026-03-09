@@ -10,7 +10,7 @@
  */
 
 import { test, expect, Page } from '@playwright/test'
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'fs'
 import { tmpdir, homedir } from 'os'
 import { join } from 'path'
@@ -23,8 +23,16 @@ import { PORT } from '../playwright.config'
 const DIFFTY_HOME = join(homedir(), '.difftypp')
 const BASE_URL = `http://localhost:${PORT}`
 
+/**
+ * Sanitize a path the same way Go's sanitizeRepoPath does:
+ * replace path separators and colons with underscores.
+ */
+function sanitizePath(p: string): string {
+  return p.replace(/[/:]/g, '_')
+}
+
 // ---------------------------------------------------------------------------
-// Git helpers (spawnSync-based, no shell injection)
+// Git helpers (execFileSync with array args — no shell, no injection risk)
 // ---------------------------------------------------------------------------
 
 const GIT_ENV = {
@@ -35,22 +43,12 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: 'test@test.com',
 }
 
-/** Shell-escape an argument by wrapping in single quotes. */
-function shellEscape(arg: string): string {
-  // If the argument contains no special characters, return as-is
-  if (/^[a-zA-Z0-9_./:=@~^-]+$/.test(arg)) return arg
-  // Wrap in single quotes, escaping any embedded single quotes
-  return `'${arg.replace(/'/g, "'\\''")}'`
-}
-
 function git(repoDir: string, ...args: string[]): void {
-  const cmd = ['git', ...args.map(shellEscape)].join(' ')
-  execSync(cmd, { cwd: repoDir, stdio: 'pipe', env: GIT_ENV })
+  execFileSync('git', args, { cwd: repoDir, stdio: 'pipe', env: GIT_ENV })
 }
 
 function gitOutput(repoDir: string, ...args: string[]): string {
-  const cmd = ['git', ...args.map(shellEscape)].join(' ')
-  return execSync(cmd, { cwd: repoDir, stdio: 'pipe', env: GIT_ENV }).toString().trim()
+  return execFileSync('git', args, { cwd: repoDir, stdio: 'pipe', env: GIT_ENV }).toString().trim()
 }
 
 // ---------------------------------------------------------------------------
@@ -145,8 +143,7 @@ async function createBranchReview(
 
 function cleanupRepoStorage(repoPath: string | undefined): void {
   if (!repoPath) return
-  // Sanitize the repo path the same way diffty does
-  const safePath = repoPath.replace(/\//g, '_').replace(/:/g, '_')
+  const safePath = sanitizePath(repoPath)
 
   // Remove review data
   const reviewsDir = join(DIFFTY_HOME, 'reviews', safePath)
