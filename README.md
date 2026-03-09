@@ -33,14 +33,6 @@ diffty++ extends the original diffty with the following additions:
 
 ![Home page showing repository selection](./docs/showcase/home-page.png)
 
-### Files Changed
-
-![Files changed view showing list of modified files](./docs/showcase/files-changed.png)
-
-### Diff View
-
-![Diff view with inline additions and deletions](./docs/showcase/diff.png)
-
 ### Past Reviews
 
 ![Three-column layout with file sidebar, diff with inline past comments, and past reviews panel](./docs/showcase/past-reviews.png)
