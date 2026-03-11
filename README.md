@@ -41,10 +41,46 @@ diffty++ extends the original diffty with the following additions:
 
 ### Requirements
 
-- Go 1.22+
 - Git 2.30+
+- A modern browser
 
-### Building from Source
+### Install the latest release
+
+Linux and macOS binaries are published on GitHub Releases.
+
+Install the latest release to `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Gamezar/difftypp/main/install.sh | bash
+```
+
+If `~/.local/bin` is not already on your `PATH`, add it:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Verify the install:
+
+```bash
+diffty --version
+```
+
+### Upgrade to the latest release
+
+You can upgrade in either of these ways:
+
+```bash
+# Re-run the installer
+curl -fsSL https://raw.githubusercontent.com/Gamezar/difftypp/main/install.sh | bash
+
+# Or let diffty update itself in place
+diffty --update
+```
+
+If you want to always stay on the newest released version, use `diffty --update` whenever you start a new session, or just re-run the install script occasionally.
+
+### Build from source
 
 1. Clone the repository:
    ```bash
@@ -54,12 +90,17 @@ diffty++ extends the original diffty with the following additions:
 
 2. Build the binary:
    ```bash
-   go build -o difftypp ./cmd/diffty
+   go build -o diffty ./cmd/diffty
    ```
 
 3. (Optional) Install the binary:
    ```bash
    go install ./cmd/diffty
+   ```
+
+4. Print the local build version:
+   ```bash
+   ./diffty --version
    ```
 
 ## Usage
@@ -69,7 +110,7 @@ diffty++ extends the original diffty with the following additions:
 Start the diffty++ server:
 
 ```bash
-difftypp --port 10101
+diffty --port 10101
 ```
 
 Then open http://localhost:10101 in your web browser. From there, you can:
@@ -82,6 +123,8 @@ Then open http://localhost:10101 in your web browser. From there, you can:
 ### Command-Line Options
 
 - `--port`: Port to run the server on (default: 10101)
+- `--version`: Print the current version
+- `--update`: Upgrade to the latest GitHub release
 
 ### Keyboard Shortcuts
 

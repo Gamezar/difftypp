@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version tag (for example v1.0.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build release artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    env:
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - name: Validate version
+        run: |
+          case "$VERSION" in
+            v*) ;;
+            *) echo "Version must start with v"; exit 1 ;;
+          esac
+
+      - name: Ensure manual release tag exists
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          git fetch --tags
+          git rev-parse "$VERSION^{tag}" >/dev/null 2>&1 || {
+            echo "Tag $VERSION does not exist. Create and push the tag first."
+            exit 1
+          }
+
+      - name: Check out tagged commit for manual release
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: git checkout "$VERSION"
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build release binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          output="dist/diffty-${GOOS}-${GOARCH}"
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "$output" ./cmd/diffty
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: diffty-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/diffty-${{ matrix.goos }}-${{ matrix.goarch }}
+          if-no-files-found: error
+
+      - name: Upload install script
+        if: ${{ matrix.goos == 'linux' && matrix.goarch == 'amd64' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: diffty-install-script
+          path: install.sh
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: ${{ env.VERSION }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: dist/*
