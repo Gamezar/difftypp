@@ -61,6 +61,11 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: git checkout "$VERSION"
 
+      - name: Configure git identity
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@test.com"
+
       - name: Run tests
         run: go test ./...
 
