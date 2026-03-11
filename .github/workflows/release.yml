@@ -34,6 +34,20 @@ jobs:
     env:
       VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
     steps:
+      - name: Restrict to admins and collaborators with admin role
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          allowed="Gamezar"
+          actor="${{ github.actor }}"
+          for user in $allowed; do
+            if [ "$actor" = "$user" ]; then
+              echo "Actor $actor is authorised."
+              exit 0
+            fi
+          done
+          echo "Actor $actor is not authorised to trigger the release workflow manually."
+          exit 1
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
