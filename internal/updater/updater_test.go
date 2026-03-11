@@ -22,12 +22,12 @@ func TestCompareVersions(t *testing.T) {
 		latest   string
 		expected int
 	}{
-		{name: "current older", current: "v1.0.0", latest: "v1.1.0", expected: -1},
-		{name: "current newer", current: "v1.2.0", latest: "v1.1.0", expected: 1},
-		{name: "same version", current: "v1.0.0", latest: "v1.0.0", expected: 0},
-		{name: "dev is older than release", current: "dev", latest: "v1.0.0", expected: -1},
-		{name: "prerelease upgrades to stable", current: "v1.0.0-beta.1", latest: "v1.0.0", expected: -1},
-		{name: "stable is newer than prerelease", current: "v1.0.0", latest: "v1.0.0-beta.1", expected: 1},
+		{name: "current older", current: "v1.0", latest: "v1.1", expected: -1},
+		{name: "current newer", current: "v1.2", latest: "v1.1", expected: 1},
+		{name: "same version", current: "v1.0", latest: "v1.0", expected: 0},
+		{name: "dev is older than release", current: "dev", latest: "v1.0", expected: -1},
+		{name: "prerelease upgrades to stable", current: "v1.0-beta.1", latest: "v1.0", expected: -1},
+		{name: "stable is newer than prerelease", current: "v1.0", latest: "v1.0-beta.1", expected: 1},
 	}
 
 	for _, tc := range tests {
@@ -69,7 +69,7 @@ func TestSelfUpdateReplacesExecutable(t *testing.T) {
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			switch req.URL.String() {
 			case apiURL:
-				body := `{"tag_name":"v1.0.0","assets":[{"name":"diffty-linux-amd64","browser_download_url":"https://example.test/assets/diffty-linux-amd64"}]}`
+				body := `{"tag_name":"v1.0","assets":[{"name":"diffty-linux-amd64","browser_download_url":"https://example.test/assets/diffty-linux-amd64"}]}`
 				return jsonResponse(http.StatusOK, body), nil
 			case "https://example.test/assets/diffty-linux-amd64":
 				return binaryResponse(http.StatusOK, "new-binary"), nil
@@ -79,15 +79,15 @@ func TestSelfUpdateReplacesExecutable(t *testing.T) {
 		}),
 	}
 
-	tag, updated, err := SelfUpdate("v0.9.0")
+	tag, updated, err := SelfUpdate("v0.9")
 	if err != nil {
 		t.Fatalf("SelfUpdate returned error: %v", err)
 	}
 	if !updated {
 		t.Fatalf("SelfUpdate updated = false, want true")
 	}
-	if tag != "v1.0.0" {
-		t.Fatalf("SelfUpdate tag = %q, want v1.0.0", tag)
+	if tag != "v1.0" {
+		t.Fatalf("SelfUpdate tag = %q, want v1.0", tag)
 	}
 
 	content, err := os.ReadFile(execPath)
@@ -113,19 +113,19 @@ func TestSelfUpdateNoopWhenCurrentIsLatest(t *testing.T) {
 			if req.URL.String() != apiURL {
 				return binaryResponse(http.StatusNotFound, "not found"), nil
 			}
-			return jsonResponse(http.StatusOK, `{"tag_name":"v1.0.0","assets":[]}`), nil
+			return jsonResponse(http.StatusOK, `{"tag_name":"v1.0","assets":[]}`), nil
 		}),
 	}
 
-	tag, updated, err := SelfUpdate("v1.0.0")
+	tag, updated, err := SelfUpdate("v1.0")
 	if err != nil {
 		t.Fatalf("SelfUpdate returned error: %v", err)
 	}
 	if updated {
 		t.Fatalf("SelfUpdate updated = true, want false")
 	}
-	if tag != "v1.0.0" {
-		t.Fatalf("SelfUpdate tag = %q, want v1.0.0", tag)
+	if tag != "v1.0" {
+		t.Fatalf("SelfUpdate tag = %q, want v1.0", tag)
 	}
 }
 

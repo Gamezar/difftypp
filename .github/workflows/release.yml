@@ -3,11 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'v1.*'
   workflow_dispatch:
     inputs:
       version:
-        description: Release version tag (for example v1.0.0)
+        description: Release version tag (for example v1.0 or v1.1)
         required: true
         type: string
 
@@ -58,8 +58,8 @@ jobs:
       - name: Validate version
         run: |
           case "$VERSION" in
-            v*) ;;
-            *) echo "Version must start with v"; exit 1 ;;
+            v1.*) ;;
+            *) echo "Version must be in v1.x format (e.g. v1.0, v1.1)"; exit 1 ;;
           esac
 
       - name: Ensure manual release tag exists
