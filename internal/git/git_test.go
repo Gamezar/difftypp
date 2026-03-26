@@ -500,6 +500,147 @@ func TestGetUnstagedFileDiff(t *testing.T) {
 	})
 }
 
+// setupDivergedRepo creates a repo where both branches have commits after the fork point.
+// History:
+//
+//	main:    initial commit -> "main-only.txt" added (target-only change)
+//	feature: initial commit -> "feature.txt" added (source-only change)
+func setupDivergedRepo(t *testing.T) string {
+	t.Helper()
+
+	tempDir, err := os.MkdirTemp("", "diffty-diverged-test")
+	if err != nil {
+		t.Fatalf("Failed to create temporary directory: %v", err)
+	}
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", tempDir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			os.RemoveAll(tempDir)
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	run("init")
+	run("config", "--local", "commit.gpgsign", "false")
+
+	// Initial commit on main
+	if err := os.WriteFile(filepath.Join(tempDir, "base.txt"), []byte("base content"), 0644); err != nil {
+		os.RemoveAll(tempDir)
+		t.Fatalf("Failed to write base file: %v", err)
+	}
+	run("add", "base.txt")
+	run("commit", "-m", "Initial commit")
+	run("branch", "-M", "main")
+
+	// Create feature branch and add a feature-only file
+	run("checkout", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(tempDir, "feature.txt"), []byte("feature work"), 0644); err != nil {
+		os.RemoveAll(tempDir)
+		t.Fatalf("Failed to write feature file: %v", err)
+	}
+	run("add", "feature.txt")
+	run("commit", "-m", "Add feature file")
+
+	// Go back to main and add a main-only file (diverging commit)
+	run("checkout", "main")
+	if err := os.WriteFile(filepath.Join(tempDir, "main-only.txt"), []byte("main work"), 0644); err != nil {
+		os.RemoveAll(tempDir)
+		t.Fatalf("Failed to write main-only file: %v", err)
+	}
+	run("add", "main-only.txt")
+	run("commit", "-m", "Add main-only file")
+
+	return tempDir
+}
+
+func TestGetDiffDivergedBranches(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	repoDir := setupDivergedRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	diff, err := repo.GetDiff("feature", "main")
+	if err != nil {
+		t.Fatalf("GetDiff failed: %v", err)
+	}
+
+	// Should contain the feature branch change
+	if !strings.Contains(diff, "feature.txt") {
+		t.Errorf("Expected diff to contain 'feature.txt' (source branch change), but it doesn't.\nDiff: %s", diff)
+	}
+
+	// Must NOT contain the main-only change (this is the bug the three-dot fix addresses)
+	if strings.Contains(diff, "main-only.txt") {
+		t.Errorf("Diff should NOT contain 'main-only.txt' (target-only change), but it does.\nDiff: %s", diff)
+	}
+}
+
+func TestGetFileDiffDivergedBranches(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	repoDir := setupDivergedRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	// Diff for feature-only file should show content
+	diff, err := repo.GetFileDiff("feature", "main", "feature.txt")
+	if err != nil {
+		t.Fatalf("GetFileDiff for feature.txt failed: %v", err)
+	}
+	if !strings.Contains(diff, "+feature work") {
+		t.Errorf("Expected diff to contain '+feature work', got: %s", diff)
+	}
+
+	// Diff for main-only file should be empty (not part of source branch changes)
+	diff, err = repo.GetFileDiff("feature", "main", "main-only.txt")
+	if err != nil {
+		t.Fatalf("GetFileDiff for main-only.txt failed: %v", err)
+	}
+	if diff != "" {
+		t.Errorf("Expected empty diff for main-only.txt (target-only change), got: %s", diff)
+	}
+}
+
+func TestGetFilesDivergedBranches(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	repoDir := setupDivergedRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	files, err := repo.GetFiles("feature", "main")
+	if err != nil {
+		t.Fatalf("GetFiles failed: %v", err)
+	}
+
+	// Should list only the feature branch file
+	if len(files) != 1 {
+		t.Errorf("Expected 1 changed file, got %d: %v", len(files), files)
+	}
+	if len(files) > 0 && files[0] != "feature.txt" {
+		t.Errorf("Expected 'feature.txt', got '%s'", files[0])
+	}
+
+	// Specifically verify main-only.txt is not listed
+	for _, f := range files {
+		if f == "main-only.txt" {
+			t.Errorf("Files should NOT contain 'main-only.txt' (target-only change)")
+		}
+	}
+}
+
 func TestGetRecentCommits(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git command not available, skipping test")
