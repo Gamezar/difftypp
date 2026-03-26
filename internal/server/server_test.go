@@ -540,6 +540,31 @@ func TestAddRepository(t *testing.T) {
 	}
 }
 
+func TestRemoveRepository(t *testing.T) {
+	t.Run("removes existing repository", func(t *testing.T) {
+		server, mockStorage := setupTestServer(t)
+		mockStorage.repositories = []string{"/test/repo", "/test/repo2"}
+
+		err := server.RemoveRepository("/test/repo")
+		if err != nil {
+			t.Fatalf("RemoveRepository failed: %v", err)
+		}
+
+		if len(mockStorage.repositories) != 1 || mockStorage.repositories[0] != "/test/repo2" {
+			t.Errorf("Expected [/test/repo2], got %v", mockStorage.repositories)
+		}
+	})
+
+	t.Run("returns error for non-existent repository", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		err := server.RemoveRepository("/does/not/exist")
+		if err == nil {
+			t.Error("Expected error for non-existent repository, got nil")
+		}
+	})
+}
+
 // TestRenderError tests the renderError method
 func TestRenderError(t *testing.T) {
 	server, _ := setupTestServer(t)
@@ -2546,6 +2571,56 @@ func TestHandleAddRepository(t *testing.T) {
 		resp := w.Result()
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+		}
+	})
+}
+
+func TestHandleRemoveRepository(t *testing.T) {
+	t.Run("removes existing repo returns 200", func(t *testing.T) {
+		server, mockStorage := setupTestServer(t)
+		mockStorage.repositories = []string{"/test/repo", "/test/repo2"}
+
+		req := httptest.NewRequest("DELETE", "/api/repository/remove?path=%2Ftest%2Frepo", nil)
+		w := httptest.NewRecorder()
+
+		server.handleRemoveRepository(w, req)
+
+		resp := w.Result()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("Expected status %d, got %d; body: %s", http.StatusOK, resp.StatusCode, body)
+		}
+
+		if len(mockStorage.repositories) != 1 || mockStorage.repositories[0] != "/test/repo2" {
+			t.Errorf("Expected [/test/repo2], got %v", mockStorage.repositories)
+		}
+	})
+
+	t.Run("missing path returns 400", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		req := httptest.NewRequest("DELETE", "/api/repository/remove", nil)
+		w := httptest.NewRecorder()
+
+		server.handleRemoveRepository(w, req)
+
+		resp := w.Result()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+		}
+	})
+
+	t.Run("non-existent repo returns 404", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		req := httptest.NewRequest("DELETE", "/api/repository/remove?path=%2Fnope", nil)
+		w := httptest.NewRecorder()
+
+		server.handleRemoveRepository(w, req)
+
+		resp := w.Result()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("Expected status %d, got %d", http.StatusNotFound, resp.StatusCode)
 		}
 	})
 }

@@ -33,10 +33,17 @@
                                 <p class="font-medium">{{$repo.Name}}</p>
                                 <p class="text-sm text-gray-500">{{$path}}</p>
                             </div>
-                            <a href="/compare?repo={{$path}}" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500"
-                               data-testid="select-repo-{{$repo.Name}}">
-                                Select
-                            </a>
+                            <div class="flex items-center gap-2">
+                                <a href="/compare?repo={{$path}}" class="px-3 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500"
+                                   data-testid="select-repo-{{$repo.Name}}">
+                                    Select
+                                </a>
+                                <button type="button" class="btn-remove-repo px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-red-500"
+                                        data-repo-path="{{$path}}"
+                                        data-testid="remove-repo-{{$repo.Name}}">
+                                    Remove
+                                </button>
+                            </div>
                         </div>
                     </li>
                 {{end}}
@@ -71,6 +78,29 @@
             <span id="browse-selected-path" class="text-sm text-gray-500 truncate flex-1" data-testid="browse-selected-path"></span>
             <button id="browse-select" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed" disabled data-testid="browse-select">
                 Select
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Remove Confirmation Modal -->
+<div id="remove-modal" class="browse-modal-overlay" style="display:none;" data-testid="remove-modal">
+    <div class="confirm-modal">
+        <div class="browse-modal-header">
+            <h3 class="font-semibold text-lg">Remove Repository</h3>
+            <button id="remove-modal-close" class="browse-modal-close" data-testid="remove-modal-close">&times;</button>
+        </div>
+        <div class="confirm-modal-body">
+            <p class="text-sm text-gray-600">Are you sure you want to remove this repository?</p>
+            <p id="remove-modal-path" class="text-sm font-medium text-gray-900 mt-2 break-all" data-testid="remove-modal-path"></p>
+        </div>
+        <div class="browse-modal-footer">
+            <span class="flex-1"></span>
+            <button id="remove-modal-cancel" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500" data-testid="remove-modal-cancel">
+                Cancel
+            </button>
+            <button id="remove-modal-confirm" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500" data-testid="remove-modal-confirm">
+                Remove
             </button>
         </div>
     </div>

@@ -195,6 +195,34 @@ func (s *Server) AddRepository(path string) (bool, error) {
 	return true, nil
 }
 
+// RemoveRepository removes a repository from the server and persists the change
+func (s *Server) RemoveRepository(path string) error {
+	repos, err := s.storage.LoadRepositories()
+	if err != nil {
+		return fmt.Errorf("failed to load repositories: %w", err)
+	}
+
+	filtered := make([]string, 0, len(repos))
+	found := false
+	for _, repo := range repos {
+		if repo == path {
+			found = true
+			continue
+		}
+		filtered = append(filtered, repo)
+	}
+
+	if !found {
+		return fmt.Errorf("repository not found: %s", path)
+	}
+
+	if err := s.storage.SaveRepositories(filtered); err != nil {
+		return fmt.Errorf("failed to save repositories: %w", err)
+	}
+
+	return nil
+}
+
 // GetRepository returns a repository by path
 func (s *Server) GetRepository(path string) (*git.Repository, bool, error) {
 	repos, err := s.storage.LoadRepositories()
@@ -240,6 +268,7 @@ func (s *Server) Router() http.Handler {
 	// API routes
 	mux.HandleFunc("GET /api/browse", s.handleBrowse)
 	mux.HandleFunc("POST /api/repository/add", s.handleAddRepository)
+	mux.HandleFunc("DELETE /api/repository/remove", s.handleRemoveRepository)
 	mux.HandleFunc("POST /api/review-state", s.handleReviewState)
 	mux.HandleFunc("POST /api/review/comment", s.handleAddComment)
 	mux.HandleFunc("DELETE /api/review/comment", s.handleDeleteComment)
@@ -711,6 +740,24 @@ func (s *Server) handleAddRepository(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect to the index page
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// handleRemoveRepository removes a repository from the list
+func (s *Server) handleRemoveRepository(w http.ResponseWriter, r *http.Request) {
+	repoPath := r.URL.Query().Get("path")
+	if repoPath == "" {
+		http.Error(w, `{"error":"repository path is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := s.RemoveRepository(repoPath); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, `{"ok":true}`)
 }
 
 // handleReviewState handles saving and loading review state
