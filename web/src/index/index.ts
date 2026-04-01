@@ -14,29 +14,35 @@ function showRemoveModal(repoPath: string): Promise<boolean> {
 
   if (!overlay || !pathEl || !confirmBtn || !cancelBtn || !closeBtn) return Promise.resolve(false)
 
+  // Re-bind after null guard so TypeScript narrows inside closures
+  const modal = overlay
+  const confirm = confirmBtn
+  const cancel = cancelBtn
+  const close = closeBtn
+
   pathEl.textContent = repoPath
-  overlay.style.display = ''
+  modal.style.display = ''
 
   return new Promise(resolve => {
     function cleanup(result: boolean) {
-      overlay.style.display = 'none'
-      confirmBtn.removeEventListener('click', onConfirm)
-      cancelBtn.removeEventListener('click', onCancel)
-      closeBtn.removeEventListener('click', onCancel)
-      overlay.removeEventListener('click', onOverlay)
+      modal.style.display = 'none'
+      confirm.removeEventListener('click', onConfirm)
+      cancel.removeEventListener('click', onCancel)
+      close.removeEventListener('click', onCancel)
+      modal.removeEventListener('click', onOverlay)
       resolve(result)
     }
 
     function onConfirm() { cleanup(true) }
     function onCancel() { cleanup(false) }
     function onOverlay(e: MouseEvent) {
-      if (e.target === overlay) cleanup(false)
+      if (e.target === modal) cleanup(false)
     }
 
-    confirmBtn.addEventListener('click', onConfirm)
-    cancelBtn.addEventListener('click', onCancel)
-    closeBtn.addEventListener('click', onCancel)
-    overlay.addEventListener('click', onOverlay)
+    confirm.addEventListener('click', onConfirm)
+    cancel.addEventListener('click', onCancel)
+    close.addEventListener('click', onCancel)
+    modal.addEventListener('click', onOverlay)
   })
 }
 
