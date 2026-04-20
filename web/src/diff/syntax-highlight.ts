@@ -6,7 +6,7 @@
  * preserving multi-line context (block comments, namespaces, templates, etc.).
  */
 
-import { createHighlighterCore, type HighlighterCore } from 'shiki/core'
+import { createHighlighterCore, type HighlighterCore, type LanguageInput } from 'shiki/core'
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
 
 // Lazy-import language grammars — only loaded when needed
@@ -80,7 +80,7 @@ export async function initializeSyntaxHighlight(): Promise<void> {
     const langModule = await LANG_IMPORTS[language]()
     highlighter = await createHighlighterCore({
       themes: [import('shiki/themes/catppuccin-latte.mjs')],
-      langs: [langModule as Parameters<HighlighterCore['loadLanguage']>[0]],
+      langs: [langModule as LanguageInput],
       engine: createJavaScriptRegexEngine(),
     })
   } catch {
