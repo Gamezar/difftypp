@@ -560,6 +560,11 @@ func TestDetectLanguageComplete(t *testing.T) {
 		// Dockerfile extension
 		{"build.dockerfile", "dockerfile"},
 
+		// CMake
+		{"CMakeLists.txt", "cmake"},
+		{"path/to/CMakeLists.txt", "cmake"},
+		{"toolchain.cmake", "cmake"},
+
 		// Special filenames (no extension, handled by basename check)
 		{"Dockerfile", "dockerfile"},
 		{"path/to/Dockerfile", "dockerfile"},

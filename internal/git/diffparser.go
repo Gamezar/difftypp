@@ -244,6 +244,8 @@ func DetectLanguage(filePath string) string {
 		return "sql"
 	case ".toml":
 		return "toml"
+	case ".cmake":
+		return "cmake"
 	case ".dockerfile":
 		return "dockerfile"
 	default:
@@ -254,6 +256,9 @@ func DetectLanguage(filePath string) string {
 		}
 		if base == "makefile" {
 			return "makefile"
+		}
+		if base == "cmakelists.txt" {
+			return "cmake"
 		}
 		return ""
 	}

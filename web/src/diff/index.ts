@@ -12,6 +12,7 @@ import { initializeCommentSystem } from './comment-system'
 import { CursorState, initializeCursorNavigation } from './cursor-navigation'
 import { initializeSidebar } from './sidebar'
 import { initializeStatusFilter } from './status-filter'
+import { initializeSyntaxHighlight } from './syntax-highlight'
 
 document.addEventListener('DOMContentLoaded', () => {
   // Cursor state is created by initializeCursorNavigation (phase 2).
@@ -28,4 +29,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initializeStatusFilter()
   initializeSidebar()
+  initializeSyntaxHighlight()
 })

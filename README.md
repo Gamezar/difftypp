@@ -9,12 +9,14 @@ diffty++ is a fork of [diffty](https://github.com/darccio/diffty).
 diffty++ extends the original diffty with the following additions:
 
 - **Multi-mode diff comparison**: Compare branches, arbitrary commits, staged changes, or unstaged working tree modifications via a tabbed UI.
+- **Syntax highlighting**: VSCode-quality highlighting via Shiki with Catppuccin Latte theme — supports C/C++, CMake, Python, Go, TypeScript, Rust, Java, YAML, JSON, and 13 more languages.
 - **Inline review comments**: GitHub PR-style inline comments with line selection, comment resolution, markdown export, and review submission flow.
 - **File explorer**: Browse the filesystem to select repositories through a modal dialog with breadcrumb navigation, git repository detection, and directory filtering.
 
 ## Features
 
 - **Enhanced Diff Visualization**: Side-by-side and unified diff views with syntax highlighting
+- **Syntax Highlighting**: VSCode-quality syntax highlighting powered by [Shiki](https://shiki.style/) (TextMate grammars) with the Catppuccin Latte theme. Supports 22 languages including Go, C/C++, CMake, Python, TypeScript, Rust, Java, YAML, JSON, and more. Highlights diff lines with full multi-line context (block comments, namespaces, templates).
 - **Multi-Repository Support**: Select and switch between multiple repositories through the UI
 - **File Explorer**: Browse the filesystem visually to find and select repositories instead of typing paths
 - **Sidebar Navigation**: Persistent file list sidebar with status indicators (approved/rejected/skipped/unreviewed), click-to-navigate, and auto-redirect to the first changed file

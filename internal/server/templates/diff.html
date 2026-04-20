@@ -110,7 +110,7 @@
         {{else}}
             {{if .SelectedFile}}
                 {{/* ===== SINGLE FILE DIFF VIEW (structured table) ===== */}}
-                <div id="diff-content" class="bg-white shadow rounded-lg overflow-hidden" tabindex="0" data-testid="diff-content">
+                <div id="diff-content" class="bg-white shadow rounded-lg overflow-hidden" tabindex="0" data-testid="diff-content" data-language="{{.SelectedFileLanguage}}">
                     <div class="flex justify-between items-center p-4 border-b">
                         <h3 class="font-mono text-lg font-medium">{{.SelectedFile}}</h3>
                         <div class="flex space-x-2">
@@ -550,6 +550,10 @@
         0%, 100% { background-color: inherit; }
         50% { background-color: #fecaca; }
     }
+
+    /* Syntax highlighting — shiki uses inline color styles, ensure they render on diff backgrounds */
+    .diff-line-content span[style] { font-style: inherit; }
+    .diff-line-content .italic { font-style: italic; }
 
     /* Help overlay */
     .shortcuts-overlay {
