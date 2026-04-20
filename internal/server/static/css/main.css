@@ -216,4 +216,19 @@ div[tabindex="0"]:focus {
     border-top: 1px solid #e5e7eb;
     background: #f9fafb;
     border-radius: 0 0 0.5rem 0.5rem;
-} 
+}
+
+/* Confirm modal (smaller variant reusing overlay + header/footer) */
+.confirm-modal {
+    background: #fff;
+    border-radius: 0.5rem;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    width: 90%;
+    max-width: 420px;
+    display: flex;
+    flex-direction: column;
+}
+
+.confirm-modal-body {
+    padding: 1.25rem;
+}

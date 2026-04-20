@@ -61,7 +61,7 @@ func (r *Repository) GetBranchCommitHash(branch string) (string, error) {
 // targetBranch is the base branch (what we're merging INTO, e.g. main)
 // sourceBranch is the feature branch (what we're merging FROM, e.g. feature-branch)
 func (r *Repository) GetDiff(sourceBranch, targetBranch string) (string, error) {
-	cmd := exec.Command("git", "-C", r.Path, "diff", "--no-color", targetBranch, sourceBranch)
+	cmd := exec.Command("git", "-C", r.Path, "diff", "--no-color", targetBranch+"..."+sourceBranch)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
@@ -76,7 +76,7 @@ func (r *Repository) GetDiff(sourceBranch, targetBranch string) (string, error) 
 // targetBranch is the base branch (what we're merging INTO, e.g. main)
 // sourceBranch is the feature branch (what we're merging FROM, e.g. feature-branch)
 func (r *Repository) GetFileDiff(sourceBranch, targetBranch, filePath string) (string, error) {
-	cmd := exec.Command("git", "-C", r.Path, "diff", "--no-color", targetBranch, sourceBranch, "--", filePath)
+	cmd := exec.Command("git", "-C", r.Path, "diff", "--no-color", targetBranch+"..."+sourceBranch, "--", filePath)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
@@ -91,7 +91,7 @@ func (r *Repository) GetFileDiff(sourceBranch, targetBranch, filePath string) (s
 // targetBranch is the base branch (what we're merging INTO, e.g. main)
 // sourceBranch is the feature branch (what we're merging FROM, e.g. feature-branch)
 func (r *Repository) GetFiles(sourceBranch, targetBranch string) ([]string, error) {
-	cmd := exec.Command("git", "-C", r.Path, "diff", "--name-only", targetBranch, sourceBranch)
+	cmd := exec.Command("git", "-C", r.Path, "diff", "--name-only", targetBranch+"..."+sourceBranch)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()

@@ -4,8 +4,8 @@
 *.dll
 *.so
 *.dylib
-./diffty
-./difftypp
+diffty
+difftypp
 
 # Test binary, built with `go test -c`
 *.test
@@ -34,5 +34,10 @@ Thumbs.db
 
 # Node modules (web/ frontend build tooling)
 web/node_modules/
+
+# Playwright test artifacts
+web/test-results/
+web/playwright-report/
+e2e-*.png
 
 # Serena - internal .serena/.gitignore manages what to track

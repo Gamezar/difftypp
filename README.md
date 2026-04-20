@@ -11,6 +11,7 @@ diffty++ extends the original diffty with the following additions:
 - **Multi-mode diff comparison**: Compare branches, arbitrary commits, staged changes, or unstaged working tree modifications via a tabbed UI.
 - **Syntax highlighting**: VSCode-quality highlighting via Shiki with Catppuccin Latte theme — supports C/C++, CMake, Python, Go, TypeScript, Rust, Java, YAML, JSON, and 13 more languages.
 - **Inline review comments**: GitHub PR-style inline comments with line selection, comment resolution, markdown export, and review submission flow.
+- **Past reviews sidebar**: Right-side panel showing previous review sessions for the same branch pair, with inline faded rendering of past comments on the current diff, "View original" links back to the original commit pair, and per-review or bulk deletion.
 - **File explorer**: Browse the filesystem to select repositories through a modal dialog with breadcrumb navigation, git repository detection, and directory filtering.
 
 ## Features
@@ -22,6 +23,7 @@ diffty++ extends the original diffty with the following additions:
 - **Sidebar Navigation**: Persistent file list sidebar with status indicators (approved/rejected/skipped/unreviewed), click-to-navigate, and auto-redirect to the first changed file
 - **Back Navigation**: Stack-based file history with per-file scroll position tracking — press Backspace or click the back button to return to the previous file at the exact scroll position you left
 - **Review Workflow**: Mark files as approved, rejected, or skipped
+- **Past Reviews**: View previous review sessions for the same branch pair in a right-side sidebar, with past comments rendered inline (faded) on the current diff. Navigate back to the original diff via "View original", or delete individual/all past reviews.
 - **Keyboard-Centric Navigation**: Efficient keyboard shortcuts for all operations
 - **Review State Persistence**: Save and resume reviews across sessions
 - **Git Integration**: Works with any Git repository
@@ -33,22 +35,54 @@ diffty++ extends the original diffty with the following additions:
 
 ![Home page showing repository selection](./docs/showcase/home-page.png)
 
-### Files Changed
-
-![Files changed view showing list of modified files](./docs/showcase/files-changed.png)
-
 ### Diff View
 
-![Diff view with inline additions and deletions](./docs/showcase/diff.png)
+![Three-column layout with file sidebar, diff with inline past comments, and past reviews panel](./docs/showcase/past-reviews.png)
 
 ## Installation
 
 ### Requirements
 
-- Go 1.22+
 - Git 2.30+
+- A modern browser
 
-### Building from Source
+### Install the latest release
+
+Linux and macOS binaries are published on GitHub Releases.
+
+Install the latest release to `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Gamezar/difftypp/main/install.sh | bash
+```
+
+If `~/.local/bin` is not already on your `PATH`, add it:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Verify the install:
+
+```bash
+diffty --version
+```
+
+### Upgrade to the latest release
+
+You can upgrade in either of these ways:
+
+```bash
+# Re-run the installer
+curl -fsSL https://raw.githubusercontent.com/Gamezar/difftypp/main/install.sh | bash
+
+# Or let diffty update itself in place
+diffty --update
+```
+
+If you want to always stay on the newest released version, use `diffty --update` whenever you start a new session, or just re-run the install script occasionally.
+
+### Build from source
 
 1. Clone the repository:
    ```bash
@@ -58,12 +92,17 @@ diffty++ extends the original diffty with the following additions:
 
 2. Build the binary:
    ```bash
-   go build -o difftypp ./cmd/diffty
+   go build -o diffty ./cmd/diffty
    ```
 
 3. (Optional) Install the binary:
    ```bash
    go install ./cmd/diffty
+   ```
+
+4. Print the local build version:
+   ```bash
+   ./diffty --version
    ```
 
 ## Usage
@@ -73,7 +112,7 @@ diffty++ extends the original diffty with the following additions:
 Start the diffty++ server:
 
 ```bash
-difftypp --port 10101
+diffty --port 10101
 ```
 
 Then open http://localhost:10101 in your web browser. From there, you can:
@@ -86,6 +125,8 @@ Then open http://localhost:10101 in your web browser. From there, you can:
 ### Command-Line Options
 
 - `--port`: Port to run the server on (default: 10101)
+- `--version`: Print the current version
+- `--update`: Upgrade to the latest GitHub release
 
 ### Keyboard Shortcuts
 
@@ -110,7 +151,8 @@ Click **Browse** next to the repository path input to open the file explorer. Th
 diffty++ includes comprehensive testing to ensure reliability:
 
 - **Go tests**: Unit tests for core functionality in each package (`git`, `storage`, `server`) with mock-based isolation and HTTP testing via Go's httptest package
-- **TypeScript tests**: Frontend unit tests using [Vitest](https://vitest.dev/) with jsdom for DOM testing — covers sidebar navigation, cursor persistence, comment system, keyboard navigation, and status filtering
+- **TypeScript tests**: Frontend unit tests using [Vitest](https://vitest.dev/) with jsdom for DOM testing — covers sidebar navigation, cursor persistence, comment system, keyboard navigation, status filtering, and past reviews error handling
+- **End-to-end tests**: Browser-based tests using [Playwright](https://playwright.dev/) that spin up a real diffty++ server and exercise full workflows — past reviews lifecycle across branches, staged, unstaged, and commits modes
 
 Run the tests:
 
@@ -120,6 +162,9 @@ go test ./...
 
 # TypeScript tests
 cd web && npm test
+
+# End-to-end tests (requires Playwright browsers installed)
+cd web && npm run test:e2e
 ```
 
 ## Contributing

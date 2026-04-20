@@ -91,3 +91,28 @@ const (
 	ReviewStatusDraft     = "draft"
 	ReviewStatusSubmitted = "submitted"
 )
+
+// ReviewIndexEntry represents a single submitted review in the branch-pair index
+type ReviewIndexEntry struct {
+	ReviewID     string `json:"review_id"`
+	SourceCommit string `json:"source_commit"`
+	TargetCommit string `json:"target_commit"`
+	DiffMode     string `json:"diff_mode"`
+	SubmittedAt  string `json:"submitted_at"`
+	CommentCount int    `json:"comment_count"`
+}
+
+// ReviewIndex tracks all submitted reviews for a branch pair
+type ReviewIndex struct {
+	RepoPath     string             `json:"repo_path"`
+	SourceBranch string             `json:"source_branch"`
+	TargetBranch string             `json:"target_branch"`
+	Reviews      []ReviewIndexEntry `json:"reviews"`
+}
+
+// PastComment wraps a ReviewComment with metadata about which past review it belongs to
+type PastComment struct {
+	ReviewComment
+	ReviewSubmittedAt string `json:"review_submitted_at"`
+	ReviewID          string `json:"review_id"`
+}

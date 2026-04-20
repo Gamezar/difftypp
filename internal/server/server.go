@@ -100,6 +100,46 @@ func New(storage storage.Storage) (*Server, error) {
 			}
 			return result
 		},
+		// pastCommentsForLine filters past review comments for a specific file and line number.
+		// Uses the same matching logic as commentsForLine but operates on PastComment slices.
+		"pastCommentsForLine": func(comments []models.PastComment, filePath string, rightNum int, leftNum int) []models.PastComment {
+			var result []models.PastComment
+			for _, c := range comments {
+				if c.FilePath != filePath {
+					continue
+				}
+				rightMatch := rightNum > 0 && c.EndLine == rightNum
+				leftMatch := leftNum > 0 && c.EndLine == leftNum
+				switch c.Side {
+				case "left":
+					if leftMatch {
+						result = append(result, c)
+					}
+				case "right":
+					if rightMatch {
+						result = append(result, c)
+					}
+				default:
+					if rightMatch || leftMatch {
+						result = append(result, c)
+					}
+				}
+			}
+			return result
+		},
+		// canLinkToDiff returns true if the diff mode supports linking back to original diff view.
+		// Branch and commit modes produce permanent diffs; staged/unstaged diffs are ephemeral.
+		"canLinkToDiff": func(mode string) bool {
+			return mode == models.ModeBranches || mode == models.ModeCommits
+		},
+		// formatTime formats an RFC3339 timestamp to a short human-readable string
+		"formatTime": func(ts string) string {
+			t, err := time.Parse(time.RFC3339, ts)
+			if err != nil {
+				return ts
+			}
+			return t.Format("Jan 2 15:04")
+		},
 	}
 
 	// Parse all templates with the function map
@@ -155,6 +195,34 @@ func (s *Server) AddRepository(path string) (bool, error) {
 	return true, nil
 }
 
+// RemoveRepository removes a repository from the server and persists the change
+func (s *Server) RemoveRepository(path string) error {
+	repos, err := s.storage.LoadRepositories()
+	if err != nil {
+		return fmt.Errorf("failed to load repositories: %w", err)
+	}
+
+	filtered := make([]string, 0, len(repos))
+	found := false
+	for _, repo := range repos {
+		if repo == path {
+			found = true
+			continue
+		}
+		filtered = append(filtered, repo)
+	}
+
+	if !found {
+		return fmt.Errorf("repository not found: %s", path)
+	}
+
+	if err := s.storage.SaveRepositories(filtered); err != nil {
+		return fmt.Errorf("failed to save repositories: %w", err)
+	}
+
+	return nil
+}
+
 // GetRepository returns a repository by path
 func (s *Server) GetRepository(path string) (*git.Repository, bool, error) {
 	repos, err := s.storage.LoadRepositories()
@@ -200,12 +268,15 @@ func (s *Server) Router() http.Handler {
 	// API routes
 	mux.HandleFunc("GET /api/browse", s.handleBrowse)
 	mux.HandleFunc("POST /api/repository/add", s.handleAddRepository)
+	mux.HandleFunc("DELETE /api/repository/remove", s.handleRemoveRepository)
 	mux.HandleFunc("POST /api/review-state", s.handleReviewState)
 	mux.HandleFunc("POST /api/review/comment", s.handleAddComment)
 	mux.HandleFunc("DELETE /api/review/comment", s.handleDeleteComment)
 	mux.HandleFunc("POST /api/review/comment/resolve", s.handleResolveComment)
 	mux.HandleFunc("POST /api/review/submit", s.handleSubmitReview)
 	mux.HandleFunc("GET /api/review/export", s.handleExportReview)
+	mux.HandleFunc("DELETE /api/review/past", s.handleDeletePastReview)
+	mux.HandleFunc("DELETE /api/reviews/past", s.handleDeleteAllPastReviews)
 
 	// HTML routes
 	mux.HandleFunc("GET /compare", s.handleCompare)
@@ -671,6 +742,24 @@ func (s *Server) handleAddRepository(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+// handleRemoveRepository removes a repository from the list
+func (s *Server) handleRemoveRepository(w http.ResponseWriter, r *http.Request) {
+	repoPath := r.URL.Query().Get("path")
+	if repoPath == "" {
+		http.Error(w, `{"error":"repository path is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := s.RemoveRepository(repoPath); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, `{"ok":true}`)
+}
+
 // handleReviewState handles saving and loading review state
 func (s *Server) handleReviewState(w http.ResponseWriter, r *http.Request) {
 	// Get required parameters
@@ -927,6 +1016,20 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 	}
 	data["OpenCommentCount"] = openComments
 
+	// Load past reviews for this branch pair
+	var pastReviews []models.ReviewIndexEntry
+	reviewIndex, indexErr := s.storage.LoadReviewIndex(p.RepoPath, p.SourceBranch, p.TargetBranch)
+	if indexErr == nil {
+		for _, entry := range reviewIndex.Reviews {
+			// Exclude the current commit pair — that's the active review, not a past one
+			if entry.SourceCommit == p.SourceCommit && entry.TargetCommit == p.TargetCommit {
+				continue
+			}
+			pastReviews = append(pastReviews, entry)
+		}
+	}
+	data["PastReviews"] = pastReviews
+
 	if p.FilePath == "" {
 		// Auto-redirect to the first file if there are files to show
 		if len(files) > 0 {
@@ -934,6 +1037,20 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 			return
 		}
+		// For the file list view, load past review comments for the expandable sidebar (staged/unstaged)
+		var pastReviewsWithComments []map[string]interface{}
+		for _, entry := range pastReviews {
+			if entry.DiffMode == models.ModeStaged || entry.DiffMode == models.ModeUnstaged {
+				pastReview, err := s.storage.LoadReview(p.RepoPath, p.SourceBranch, p.TargetBranch, entry.SourceCommit, entry.TargetCommit)
+				if err == nil && len(pastReview.Comments) > 0 {
+					pastReviewsWithComments = append(pastReviewsWithComments, map[string]interface{}{
+						"Entry":    entry,
+						"Comments": pastReview.Comments,
+					})
+				}
+			}
+		}
+		data["PastReviewsWithComments"] = pastReviewsWithComments
 		s.render(w, "diff.html", data)
 		return
 	}
@@ -970,6 +1087,25 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		data["FileComments"] = fileComments
+
+		// Load past comments for inline rendering on current diff (best-effort by file+line)
+		var pastFileComments []models.PastComment
+		for _, entry := range pastReviews {
+			pastReview, err := s.storage.LoadReview(p.RepoPath, p.SourceBranch, p.TargetBranch, entry.SourceCommit, entry.TargetCommit)
+			if err != nil {
+				continue
+			}
+			for _, c := range pastReview.Comments {
+				if c.FilePath == p.FilePath {
+					pastFileComments = append(pastFileComments, models.PastComment{
+						ReviewComment:     c,
+						ReviewSubmittedAt: entry.SubmittedAt,
+						ReviewID:          entry.ReviewID,
+					})
+				}
+			}
+		}
+		data["PastFileComments"] = pastFileComments
 
 		// Determine the file status for display in the UI
 		fileStatus := "unreviewed"
@@ -1332,6 +1468,46 @@ func (s *Server) handleSubmitReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Add to review index for this branch pair so past reviews are discoverable
+	reviewIndex, indexErr := s.storage.LoadReviewIndex(p.RepoPath, p.SourceBranch, p.TargetBranch)
+	if indexErr != nil {
+		reviewIndex = &models.ReviewIndex{
+			RepoPath:     p.RepoPath,
+			SourceBranch: p.SourceBranch,
+			TargetBranch: p.TargetBranch,
+			Reviews:      []models.ReviewIndexEntry{},
+		}
+	}
+
+	// Count open comments for the index entry
+	openCount := 0
+	for _, c := range review.Comments {
+		if c.Status == models.CommentStatusOpen {
+			openCount++
+		}
+	}
+
+	// Avoid duplicate entries for the same commit pair
+	alreadyExists := false
+	for _, entry := range reviewIndex.Reviews {
+		if entry.SourceCommit == p.SourceCommit && entry.TargetCommit == p.TargetCommit {
+			alreadyExists = true
+			break
+		}
+	}
+	if !alreadyExists {
+		reviewIndex.Reviews = append(reviewIndex.Reviews, models.ReviewIndexEntry{
+			ReviewID:     review.ID,
+			SourceCommit: p.SourceCommit,
+			TargetCommit: p.TargetCommit,
+			DiffMode:     p.Mode,
+			SubmittedAt:  review.SubmittedAt,
+			CommentCount: openCount,
+		})
+		// Best-effort save — don't block the submit flow on index failure
+		_ = s.storage.SaveReviewIndex(reviewIndex, p.RepoPath)
+	}
+
 	// Get the diff to generate markdown export with code context
 	repo, exists, err := s.GetRepository(p.RepoPath)
 	if err != nil || !exists {
@@ -1385,6 +1561,55 @@ func (s *Server) handleExportReview(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Write([]byte(markdown))
+}
+
+// handleDeletePastReview handles DELETE /api/review/past — deletes a single past review
+func (s *Server) handleDeletePastReview(w http.ResponseWriter, r *http.Request) {
+	p := parseDiffParams(r)
+
+	pastSourceCommit := r.URL.Query().Get("past_source_commit")
+	pastTargetCommit := r.URL.Query().Get("past_target_commit")
+
+	if p.RepoPath == "" || p.SourceBranch == "" || p.TargetBranch == "" || pastSourceCommit == "" || pastTargetCommit == "" {
+		http.Error(w, "Missing required parameters", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.storage.DeleteReviewData(p.RepoPath, p.SourceBranch, p.TargetBranch, pastSourceCommit, pastTargetCommit); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete past review: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
+}
+
+// handleDeleteAllPastReviews handles DELETE /api/reviews/past — deletes all past reviews for a branch pair
+func (s *Server) handleDeleteAllPastReviews(w http.ResponseWriter, r *http.Request) {
+	p := parseDiffParams(r)
+
+	if p.RepoPath == "" || p.SourceBranch == "" || p.TargetBranch == "" {
+		http.Error(w, "Missing required parameters", http.StatusBadRequest)
+		return
+	}
+
+	index, err := s.storage.LoadReviewIndex(p.RepoPath, p.SourceBranch, p.TargetBranch)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to load review index: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Delete all entries except the current commit pair (which is the active review)
+	for _, entry := range index.Reviews {
+		if entry.SourceCommit == p.SourceCommit && entry.TargetCommit == p.TargetCommit {
+			continue
+		}
+		// Best-effort deletion — continue even if one fails
+		_ = s.storage.DeleteReviewData(p.RepoPath, p.SourceBranch, p.TargetBranch, entry.SourceCommit, entry.TargetCommit)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
 }
 
 // generateMarkdownExport creates a formatted markdown document from a review with code context

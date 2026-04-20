@@ -1,0 +1,98 @@
+name: Dev Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dev-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build dev artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@test.com"
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build dev binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          VERSION="dev-${SHORT_SHA}"
+          mkdir -p dist
+          output="dist/diffty-${GOOS}-${GOARCH}"
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "$output" ./cmd/diffty
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: diffty-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/diffty-${{ matrix.goos }}-${{ matrix.goarch }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish dev release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create or update dev release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          TAG="dev-${SHORT_SHA}"
+
+          # Delete previous dev-* tags/releases (keep only the latest)
+          gh release list --json tagName -q '.[].tagName' | grep '^dev-' | while read -r old_tag; do
+            echo "Deleting old dev release: $old_tag"
+            gh release delete "$old_tag" --yes --cleanup-tag || true
+          done
+
+          # Create new dev release
+          gh release create "$TAG" dist/* \
+            --title "Dev Build (${SHORT_SHA})" \
+            --notes "Automated dev build from commit ${GITHUB_SHA} on main." \
+            --prerelease

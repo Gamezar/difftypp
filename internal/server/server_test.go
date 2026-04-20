@@ -25,6 +25,7 @@ type MockStorage struct {
 	repositories []string
 	reviewState  *models.ReviewState
 	review       *models.Review
+	reviewIndex  *models.ReviewIndex
 	saveCalled   bool
 	loadCalled   bool
 }
@@ -77,6 +78,38 @@ func (m *MockStorage) SaveRepositories(repos []string) error {
 
 func (m *MockStorage) LoadRepositories() ([]string, error) {
 	return m.repositories, nil
+}
+
+func (m *MockStorage) LoadReviewIndex(repoPath, sourceBranch, targetBranch string) (*models.ReviewIndex, error) {
+	if m.reviewIndex != nil {
+		return m.reviewIndex, nil
+	}
+	return &models.ReviewIndex{
+		RepoPath:     repoPath,
+		SourceBranch: sourceBranch,
+		TargetBranch: targetBranch,
+		Reviews:      []models.ReviewIndexEntry{},
+	}, nil
+}
+
+func (m *MockStorage) SaveReviewIndex(index *models.ReviewIndex, repoPath string) error {
+	m.reviewIndex = index
+	m.saveCalled = true
+	return nil
+}
+
+func (m *MockStorage) DeleteReviewData(repoPath, sourceBranch, targetBranch, sourceCommit, targetCommit string) error {
+	if m.reviewIndex != nil {
+		filtered := make([]models.ReviewIndexEntry, 0)
+		for _, entry := range m.reviewIndex.Reviews {
+			if entry.SourceCommit == sourceCommit && entry.TargetCommit == targetCommit {
+				continue
+			}
+			filtered = append(filtered, entry)
+		}
+		m.reviewIndex.Reviews = filtered
+	}
+	return nil
 }
 
 // baseTestTemplates returns an fstest.MapFS with minimal template stubs shared
@@ -507,6 +540,31 @@ func TestAddRepository(t *testing.T) {
 	}
 }
 
+func TestRemoveRepository(t *testing.T) {
+	t.Run("removes existing repository", func(t *testing.T) {
+		server, mockStorage := setupTestServer(t)
+		mockStorage.repositories = []string{"/test/repo", "/test/repo2"}
+
+		err := server.RemoveRepository("/test/repo")
+		if err != nil {
+			t.Fatalf("RemoveRepository failed: %v", err)
+		}
+
+		if len(mockStorage.repositories) != 1 || mockStorage.repositories[0] != "/test/repo2" {
+			t.Errorf("Expected [/test/repo2], got %v", mockStorage.repositories)
+		}
+	})
+
+	t.Run("returns error for non-existent repository", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		err := server.RemoveRepository("/does/not/exist")
+		if err == nil {
+			t.Error("Expected error for non-existent repository, got nil")
+		}
+	})
+}
+
 // TestRenderError tests the renderError method
 func TestRenderError(t *testing.T) {
 	server, _ := setupTestServer(t)
@@ -637,6 +695,7 @@ func TestHandleDiffViewStagedMode(t *testing.T) {
 		t.Fatalf("Failed to git add staged.txt: %v\n%s", err, out)
 	}
 
+	// Without file= param, auto-redirect to first file
 	reqURL := fmt.Sprintf("/diff?repo=%s&mode=staged", url.QueryEscape(tempDir))
 	req := httptest.NewRequest("GET", reqURL, nil)
 	w := httptest.NewRecorder()
@@ -644,6 +703,22 @@ func TestHandleDiffViewStagedMode(t *testing.T) {
 	server.handleDiffView(w, req)
 
 	resp := w.Result()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("Expected status 303 (redirect to first file), got %d", resp.StatusCode)
+	}
+	location := resp.Header.Get("Location")
+	if !strings.Contains(location, "file=staged.txt") {
+		t.Errorf("Expected redirect to contain 'file=staged.txt', got: %s", location)
+	}
+
+	// With file= param, render the single-file diff view
+	reqURL = fmt.Sprintf("/diff?repo=%s&mode=staged&file=staged.txt", url.QueryEscape(tempDir))
+	req = httptest.NewRequest("GET", reqURL, nil)
+	w = httptest.NewRecorder()
+
+	server.handleDiffView(w, req)
+
+	resp = w.Result()
 	body, _ := io.ReadAll(resp.Body)
 	bodyStr := string(body)
 
@@ -659,9 +734,6 @@ func TestHandleDiffViewStagedMode(t *testing.T) {
 	if !strings.Contains(bodyStr, "TargetLabel=Staged Changes") {
 		t.Errorf("Expected body to contain 'TargetLabel=Staged Changes', got: %s", bodyStr)
 	}
-	if !strings.Contains(bodyStr, "Files=staged.txt,") {
-		t.Errorf("Expected body to contain 'Files=staged.txt,', got: %s", bodyStr)
-	}
 }
 
 // TestHandleDiffViewUnstagedMode tests the real handleDiffView with unstaged working-tree changes.
@@ -674,6 +746,7 @@ func TestHandleDiffViewUnstagedMode(t *testing.T) {
 		t.Fatalf("Failed to modify test.txt: %v", err)
 	}
 
+	// Without file= param, auto-redirect to first file
 	reqURL := fmt.Sprintf("/diff?repo=%s&mode=unstaged", url.QueryEscape(tempDir))
 	req := httptest.NewRequest("GET", reqURL, nil)
 	w := httptest.NewRecorder()
@@ -681,6 +754,22 @@ func TestHandleDiffViewUnstagedMode(t *testing.T) {
 	server.handleDiffView(w, req)
 
 	resp := w.Result()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("Expected status 303 (redirect to first file), got %d", resp.StatusCode)
+	}
+	location := resp.Header.Get("Location")
+	if !strings.Contains(location, "file=test.txt") {
+		t.Errorf("Expected redirect to contain 'file=test.txt', got: %s", location)
+	}
+
+	// With file= param, render the single-file diff view
+	reqURL = fmt.Sprintf("/diff?repo=%s&mode=unstaged&file=test.txt", url.QueryEscape(tempDir))
+	req = httptest.NewRequest("GET", reqURL, nil)
+	w = httptest.NewRecorder()
+
+	server.handleDiffView(w, req)
+
+	resp = w.Result()
 	body, _ := io.ReadAll(resp.Body)
 	bodyStr := string(body)
 
@@ -695,9 +784,6 @@ func TestHandleDiffViewUnstagedMode(t *testing.T) {
 	}
 	if !strings.Contains(bodyStr, "TargetLabel=Working Tree") {
 		t.Errorf("Expected body to contain 'TargetLabel=Working Tree', got: %s", bodyStr)
-	}
-	if !strings.Contains(bodyStr, "Files=test.txt,") {
-		t.Errorf("Expected body to contain 'Files=test.txt,', got: %s", bodyStr)
 	}
 }
 
@@ -769,6 +855,7 @@ func TestHandleComparePostCommitsMode(t *testing.T) {
 func TestHandleDiffViewCommitsMode(t *testing.T) {
 	server, _, tempDir := setupRealTestServer(t)
 
+	// Without file= param, auto-redirect to first file
 	reqURL := fmt.Sprintf("/diff?repo=%s&source=feature&target=main&mode=commits", url.QueryEscape(tempDir))
 	req := httptest.NewRequest("GET", reqURL, nil)
 	w := httptest.NewRecorder()
@@ -776,6 +863,22 @@ func TestHandleDiffViewCommitsMode(t *testing.T) {
 	server.handleDiffView(w, req)
 
 	resp := w.Result()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("Expected status 303 (redirect to first file), got %d", resp.StatusCode)
+	}
+	location := resp.Header.Get("Location")
+	if !strings.Contains(location, "file=test.txt") {
+		t.Errorf("Expected redirect to contain 'file=test.txt', got: %s", location)
+	}
+
+	// With file= param, render the single-file diff view
+	reqURL = fmt.Sprintf("/diff?repo=%s&source=feature&target=main&mode=commits&file=test.txt", url.QueryEscape(tempDir))
+	req = httptest.NewRequest("GET", reqURL, nil)
+	w = httptest.NewRecorder()
+
+	server.handleDiffView(w, req)
+
+	resp = w.Result()
 	body, _ := io.ReadAll(resp.Body)
 	bodyStr := string(body)
 
@@ -791,16 +894,13 @@ func TestHandleDiffViewCommitsMode(t *testing.T) {
 	if !strings.Contains(bodyStr, "TargetLabel=main") {
 		t.Errorf("Expected body to contain 'TargetLabel=main', got: %s", bodyStr)
 	}
-	if !strings.Contains(bodyStr, "Files=test.txt,") {
-		t.Errorf("Expected body to contain 'Files=test.txt,', got: %s", bodyStr)
-	}
 }
 
 // TestHandleDiffViewBranchesModeReal tests the real handleDiffView in default branches mode.
 func TestHandleDiffViewBranchesModeReal(t *testing.T) {
 	server, _, tempDir := setupRealTestServer(t)
 
-	// No mode param — defaults to branches
+	// No mode param — defaults to branches; without file= auto-redirects
 	reqURL := fmt.Sprintf("/diff?repo=%s&source=feature&target=main", url.QueryEscape(tempDir))
 	req := httptest.NewRequest("GET", reqURL, nil)
 	w := httptest.NewRecorder()
@@ -808,6 +908,22 @@ func TestHandleDiffViewBranchesModeReal(t *testing.T) {
 	server.handleDiffView(w, req)
 
 	resp := w.Result()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("Expected status 303 (redirect to first file), got %d", resp.StatusCode)
+	}
+	location := resp.Header.Get("Location")
+	if !strings.Contains(location, "file=test.txt") {
+		t.Errorf("Expected redirect to contain 'file=test.txt', got: %s", location)
+	}
+
+	// With file= param, render the single-file diff view
+	reqURL = fmt.Sprintf("/diff?repo=%s&source=feature&target=main&file=test.txt", url.QueryEscape(tempDir))
+	req = httptest.NewRequest("GET", reqURL, nil)
+	w = httptest.NewRecorder()
+
+	server.handleDiffView(w, req)
+
+	resp = w.Result()
 	body, _ := io.ReadAll(resp.Body)
 	bodyStr := string(body)
 
@@ -822,9 +938,6 @@ func TestHandleDiffViewBranchesModeReal(t *testing.T) {
 	}
 	if !strings.Contains(bodyStr, "TargetLabel=main") {
 		t.Errorf("Expected body to contain 'TargetLabel=main', got: %s", bodyStr)
-	}
-	if !strings.Contains(bodyStr, "Files=test.txt,") {
-		t.Errorf("Expected body to contain 'Files=test.txt,', got: %s", bodyStr)
 	}
 }
 
@@ -2458,6 +2571,56 @@ func TestHandleAddRepository(t *testing.T) {
 		resp := w.Result()
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+		}
+	})
+}
+
+func TestHandleRemoveRepository(t *testing.T) {
+	t.Run("removes existing repo returns 200", func(t *testing.T) {
+		server, mockStorage := setupTestServer(t)
+		mockStorage.repositories = []string{"/test/repo", "/test/repo2"}
+
+		req := httptest.NewRequest("DELETE", "/api/repository/remove?path=%2Ftest%2Frepo", nil)
+		w := httptest.NewRecorder()
+
+		server.handleRemoveRepository(w, req)
+
+		resp := w.Result()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("Expected status %d, got %d; body: %s", http.StatusOK, resp.StatusCode, body)
+		}
+
+		if len(mockStorage.repositories) != 1 || mockStorage.repositories[0] != "/test/repo2" {
+			t.Errorf("Expected [/test/repo2], got %v", mockStorage.repositories)
+		}
+	})
+
+	t.Run("missing path returns 400", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		req := httptest.NewRequest("DELETE", "/api/repository/remove", nil)
+		w := httptest.NewRecorder()
+
+		server.handleRemoveRepository(w, req)
+
+		resp := w.Result()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+		}
+	})
+
+	t.Run("non-existent repo returns 404", func(t *testing.T) {
+		server, _ := setupTestServer(t)
+
+		req := httptest.NewRequest("DELETE", "/api/repository/remove?path=%2Fnope", nil)
+		w := httptest.NewRecorder()
+
+		server.handleRemoveRepository(w, req)
+
+		resp := w.Result()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("Expected status %d, got %d", http.StatusNotFound, resp.StatusCode)
 		}
 	})
 }
