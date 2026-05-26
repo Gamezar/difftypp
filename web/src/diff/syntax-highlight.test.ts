@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   escapeHtml,
   tokensToHtml,
@@ -239,5 +239,63 @@ describe('initializeSyntaxHighlight', () => {
       // Comments should get colored spans in all these languages
       expect(cell.innerHTML).toContain('<span')
     }
+  })
+
+  it('assigns context lines to the new stream only (no double-highlight)', async () => {
+    // Context lines used to be highlighted in both old and new streams, so
+    // the new-stream pass would overwrite the old-stream pass on the same row.
+    // After the fix, a context line is in the new stream only — and a block
+    // comment opened in a deletion must NOT bleed into addition lines.
+    document.body.innerHTML = `
+      <div id="diff-content" data-language="javascript">
+        <table>
+          <tr class="diff-line" data-line-type="deletion">
+            <td class="diff-line-content">/* multi</td>
+          </tr>
+          <tr class="diff-line" data-line-type="context">
+            <td class="diff-line-content">const shared = 1</td>
+          </tr>
+          <tr class="diff-line" data-line-type="addition">
+            <td class="diff-line-content">const added = 2</td>
+          </tr>
+        </table>
+      </div>`
+
+    await initializeSyntaxHighlight()
+
+    const cells = document.querySelectorAll('td.diff-line-content')
+    // Context line should still be highlighted via the new stream.
+    expect(cells[1].innerHTML).toContain('<span')
+    // Addition line should be highlighted as code, not swallowed by a comment.
+    expect(cells[2].innerHTML).toContain('<span')
+    expect(cells[2].innerHTML).toContain('const')
+  })
+})
+
+describe('initializeSyntaxHighlight warnings', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    warnSpy.mockRestore()
+  })
+
+  it('does not warn on a normal successful highlight', async () => {
+    document.body.innerHTML = `
+      <div id="diff-content" data-language="go">
+        <table>
+          <tr class="diff-line" data-line-type="addition">
+            <td class="diff-line-content">package main</td>
+          </tr>
+        </table>
+      </div>`
+
+    await initializeSyntaxHighlight()
+
+    expect(warnSpy).not.toHaveBeenCalled()
   })
 })

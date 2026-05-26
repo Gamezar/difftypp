@@ -50,6 +50,7 @@ export function escapeHtml(text: string): string {
  * Render a single line's tokens as HTML spans with inline color styles.
  * Tokens with the default text color are rendered without a span wrapper.
  */
+// Tied to catppuccin-latte (base color). Update if the theme changes.
 export const DEFAULT_TEXT_COLOR = '#4c4f69'
 
 export function tokensToHtml(tokens: Array<{ content: string; color?: string }>): string {
@@ -83,15 +84,17 @@ export async function initializeSyntaxHighlight(): Promise<void> {
       langs: [langModule as LanguageInput],
       engine: createJavaScriptRegexEngine(),
     })
-  } catch {
-    return // fail silently
+  } catch (err) {
+    console.warn('diffty: failed to initialize syntax highlighter', err)
+    return
   }
 
   const rows = diffContent.querySelectorAll<HTMLTableRowElement>('tr.diff-line')
   if (rows.length === 0) return
 
   // Collect lines into old-file and new-file streams.
-  // Context lines go into both. Then highlight each as a block.
+  // Context lines go into the new stream only — they exist in both versions,
+  // so assigning to one avoids double-highlighting (same row, last write wins).
   const oldLines: { row: HTMLTableRowElement; text: string }[] = []
   const newLines: { row: HTMLTableRowElement; text: string }[] = []
 
@@ -104,10 +107,7 @@ export async function initializeSyntaxHighlight(): Promise<void> {
 
     if (lineType === 'deletion') {
       oldLines.push({ row, text })
-    } else if (lineType === 'addition') {
-      newLines.push({ row, text })
     } else {
-      oldLines.push({ row, text })
       newLines.push({ row, text })
     }
   })
@@ -117,6 +117,12 @@ export async function initializeSyntaxHighlight(): Promise<void> {
 
     const code = stream.map(s => s.text).join('\n')
     const result = highlighter.codeToTokens(code, { lang: language, theme: 'catppuccin-latte' })
+
+    if (result.tokens.length < stream.length) {
+      console.warn(
+        `diffty: shiki returned ${result.tokens.length} token rows for ${stream.length} lines — trailing lines kept server HTML`
+      )
+    }
 
     result.tokens.forEach((lineTokens, i) => {
       if (i >= stream.length) return
