@@ -99,12 +99,7 @@ func (r *Repository) GetFiles(sourceBranch, targetBranch string) ([]string, erro
 		return nil, fmt.Errorf("failed to get changed files: %w", err)
 	}
 
-	files := strings.Split(strings.TrimSpace(out.String()), "\n")
-	// Handle empty diff case
-	if len(files) == 1 && files[0] == "" {
-		return []string{}, nil
-	}
-	return files, nil
+	return splitFileList(out.String()), nil
 }
 
 // GetStagedDiff returns the diff of all staged (cached) changes against HEAD
@@ -135,6 +130,20 @@ func (r *Repository) GetStagedFileDiff(filePath string) (string, error) {
 	return out.String(), nil
 }
 
+// GetStagedFiles returns the list of files with staged (cached) changes
+func (r *Repository) GetStagedFiles() ([]string, error) {
+	cmd := exec.Command("git", "-C", r.Path, "diff", "--cached", "--name-only")
+	var out, stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get staged files: %w: %s", err, stderr.String())
+	}
+
+	return splitFileList(out.String()), nil
+}
+
 // GetUnstagedDiff returns the diff of all unstaged working tree changes
 func (r *Repository) GetUnstagedDiff() (string, error) {
 	cmd := exec.Command("git", "-C", r.Path, "diff", "--no-color")
@@ -161,6 +170,30 @@ func (r *Repository) GetUnstagedFileDiff(filePath string) (string, error) {
 	}
 
 	return out.String(), nil
+}
+
+// GetUnstagedFiles returns the list of files with unstaged working tree changes
+func (r *Repository) GetUnstagedFiles() ([]string, error) {
+	cmd := exec.Command("git", "-C", r.Path, "diff", "--name-only")
+	var out, stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unstaged files: %w: %s", err, stderr.String())
+	}
+
+	return splitFileList(out.String()), nil
+}
+
+// splitFileList parses newline-separated git --name-only output into a slice,
+// returning an empty (non-nil) slice when there are no changed files.
+func splitFileList(out string) []string {
+	files := strings.Split(strings.TrimSpace(out), "\n")
+	if len(files) == 1 && files[0] == "" {
+		return []string{}
+	}
+	return files
 }
 
 // Commit represents a git commit with its hash and subject line

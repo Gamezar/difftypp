@@ -398,6 +398,33 @@ func getDiffForMode(repo *git.Repository, p diffParams) (string, error) {
 	}
 }
 
+// getFilesForMode lists the changed file paths based on the diff mode.
+// This uses git's --name-only output, which is far cheaper than fetching and
+// parsing the full textual diff just to build the sidebar file list.
+func getFilesForMode(repo *git.Repository, p diffParams) ([]string, error) {
+	switch p.Mode {
+	case models.ModeStaged:
+		return repo.GetStagedFiles()
+	case models.ModeUnstaged:
+		return repo.GetUnstagedFiles()
+	default: // branches and commits both use GetFiles with refs
+		return repo.GetFiles(p.SourceBranch, p.TargetBranch)
+	}
+}
+
+// getFileDiffForMode fetches the diff text for a single file based on the diff
+// mode, so viewing one file never re-fetches the whole changeset.
+func getFileDiffForMode(repo *git.Repository, p diffParams, filePath string) (string, error) {
+	switch p.Mode {
+	case models.ModeStaged:
+		return repo.GetStagedFileDiff(filePath)
+	case models.ModeUnstaged:
+		return repo.GetUnstagedFileDiff(filePath)
+	default: // branches and commits both use GetFileDiff with refs
+		return repo.GetFileDiff(p.SourceBranch, p.TargetBranch, filePath)
+	}
+}
+
 // handleCompare renders the comparison page
 func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 	repoPath := r.URL.Query().Get("repo")
@@ -969,25 +996,18 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 		"ReviewState":  reviewState,
 	}
 
-	// Get the diff based on mode
-	var fullDiffText string
-	var fullDiffErr error
+	// Build the sidebar file list from git's --name-only output. This avoids
+	// fetching and parsing the entire changeset on every file view — the diff
+	// for the selected file is fetched on its own below.
 	var files []map[string]string
-	var parsedFiles []models.DiffFile
+	fileList, filesErr := getFilesForMode(repo, p)
 
-	fullDiffText, fullDiffErr = getDiffForMode(repo, p)
-
-	if fullDiffErr != nil {
-		data["Error"] = fmt.Sprintf("Failed to load diff: %v", fullDiffErr)
-	} else if fullDiffText == "" {
+	if filesErr != nil {
+		data["Error"] = fmt.Sprintf("Failed to load diff: %v", filesErr)
+	} else if len(fileList) == 0 {
 		data["NoDiff"] = true
 	} else {
-		// Parse into structured diff files
-		parsedFiles = git.ParseDiff(fullDiffText)
-		data["ParsedFiles"] = parsedFiles
-
-		// Extract file paths from parsed diff (for sidebar)
-		files = extractFilesFromDiff(parsedFiles, reviewState, p.RepoPath)
+		files = extractFilesFromDiff(fileList, reviewState, p.RepoPath)
 		data["Files"] = files
 	}
 
@@ -1055,18 +1075,31 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If a specific file is requested, find it from the already-parsed full diff.
-	// This avoids a redundant git call + re-parse that the old code performed.
+	// Fetch and parse only the requested file's diff. The git pathspec restricts
+	// output to this one file, so we never re-parse the whole changeset.
+	fileDiffText, fileDiffErr := getFileDiffForMode(repo, p, p.FilePath)
 	var selectedFile *models.DiffFile
-	for i := range parsedFiles {
-		if parsedFiles[i].Path == p.FilePath {
-			selectedFile = &parsedFiles[i]
-			break
+	if fileDiffErr != nil {
+		data["Error"] = fmt.Sprintf("Failed to load file diff: %v", fileDiffErr)
+	} else {
+		parsed := git.ParseDiff(fileDiffText)
+		for i := range parsed {
+			if parsed[i].Path == p.FilePath {
+				selectedFile = &parsed[i]
+				break
+			}
+		}
+		// The pathspec already restricts output to the requested file, so if the
+		// header path differs (e.g. a rename), fall back to the sole parsed entry.
+		if selectedFile == nil && len(parsed) > 0 {
+			selectedFile = &parsed[0]
 		}
 	}
 
 	if selectedFile == nil {
-		data["Error"] = fmt.Sprintf("File %q not found in diff", p.FilePath)
+		if data["Error"] == "" {
+			data["Error"] = fmt.Sprintf("File %q not found in diff", p.FilePath)
+		}
 	} else {
 		data["SelectedFile"] = p.FilePath
 		data["SelectedFileParsed"] = *selectedFile
@@ -1149,7 +1182,7 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 }
 
 // extractFilesFromDiff extracts file paths from a diff output
-func extractFilesFromDiff(parsedFiles []models.DiffFile, reviewState *models.ReviewState, repoPath string) []map[string]string {
+func extractFilesFromDiff(filePaths []string, reviewState *models.ReviewState, repoPath string) []map[string]string {
 	var files []map[string]string
 
 	// Map to store file status
@@ -1187,15 +1220,15 @@ func extractFilesFromDiff(parsedFiles []models.DiffFile, reviewState *models.Rev
 		fileStatusMap[review.Path] = status
 	}
 
-	// Build file list from already-parsed structured diff data
-	for _, f := range parsedFiles {
-		status, exists := fileStatusMap[f.Path]
+	// Build file list from the changed-file paths
+	for _, path := range filePaths {
+		status, exists := fileStatusMap[path]
 		if !exists {
 			status = "unreviewed"
 		}
 
 		files = append(files, map[string]string{
-			"Path":   f.Path,
+			"Path":   path,
 			"Status": status,
 		})
 	}

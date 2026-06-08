@@ -243,11 +243,8 @@ func TestHandleReviewState(t *testing.T) {
 
 // TestExtractFilesFromDiff tests the extractFilesFromDiff function
 func TestExtractFilesFromDiff(t *testing.T) {
-	// Provide pre-parsed DiffFile structs (as the function now expects)
-	parsedFiles := []models.DiffFile{
-		{Path: "file1.txt", Additions: 1, Deletions: 0},
-		{Path: "file2.txt", Additions: 1, Deletions: 1},
-	}
+	// Provide the changed-file paths (as the function now expects)
+	filePaths := []string{"file1.txt", "file2.txt"}
 
 	reviewState := &models.ReviewState{
 		ReviewedFiles: []models.FileReview{
@@ -259,7 +256,7 @@ func TestExtractFilesFromDiff(t *testing.T) {
 		},
 	}
 
-	files := extractFilesFromDiff(parsedFiles, reviewState, "/test/repo")
+	files := extractFilesFromDiff(filePaths, reviewState, "/test/repo")
 
 	if len(files) != 2 {
 		t.Errorf("Expected 2 files, got %d", len(files))
