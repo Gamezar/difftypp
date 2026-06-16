@@ -261,9 +261,27 @@ export function initializeCursorNavigation(
   }
 
   const diffTable = document.querySelector('.diff-table') as HTMLElement | null
-  const diffLines: HTMLElement[] = diffTable
+  let diffLines: HTMLElement[] = diffTable
     ? Array.from(diffTable.querySelectorAll('.diff-line'))
     : []
+
+  // Context expansion inserts new .diff-line rows after init. Rebuild the cached
+  // list (re-anchoring the cursor to its current row) when that happens.
+  function rebuildDiffLines(): void {
+    if (!diffTable) return
+    const currentRow =
+      state.index >= 0 && state.index < diffLines.length
+        ? diffLines[state.index]
+        : null
+    diffLines = Array.from(diffTable.querySelectorAll('.diff-line'))
+    state.index = currentRow ? diffLines.indexOf(currentRow) : state.index
+    state.prevIndex = state.index
+    if (state.selectionAnchor >= 0) {
+      state.selectionAnchor = -1
+      commentApi?.clearLineSelection()
+    }
+  }
+  document.addEventListener('diff:rows-changed', rebuildDiffLines, listenerOpts)
 
   // Restore cursor from hash if available
   if (diffLines.length > 0) {

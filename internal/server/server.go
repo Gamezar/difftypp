@@ -275,6 +275,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("POST /api/review/comment/resolve", s.handleResolveComment)
 	mux.HandleFunc("POST /api/review/submit", s.handleSubmitReview)
 	mux.HandleFunc("GET /api/review/export", s.handleExportReview)
+	mux.HandleFunc("GET /api/file-context", s.handleFileContext)
 	mux.HandleFunc("DELETE /api/review/past", s.handleDeletePastReview)
 	mux.HandleFunc("DELETE /api/reviews/past", s.handleDeleteAllPastReviews)
 
@@ -1105,6 +1106,11 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 		data["SelectedFileParsed"] = *selectedFile
 		data["SelectedFileLanguage"] = git.DetectLanguage(p.FilePath)
 
+		// Collapsed-context regions for GitHub-style expand controls
+		hunkGaps, bottomGap := computeHunkGaps(*selectedFile)
+		data["HunkGaps"] = hunkGaps
+		data["BottomGap"] = bottomGap
+
 		// Reconstruct raw diff lines from parsed hunks for the fallback raw view
 		var diffLines []string
 		for _, section := range selectedFile.Sections {
@@ -1179,6 +1185,198 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "diff.html", data)
+}
+
+// fileContextSource picks the git ref (or working tree) to read full file
+// content from when expanding diff context. The "new"/right side of each diff
+// mode is what the displayed right-side line numbers map to:
+//   - branches/commits: the source commit
+//   - staged:           the index (empty ref → git show :path)
+//   - unstaged:         the on-disk working tree file
+func fileContextSource(p diffParams) (ref string, useWorkingTree bool) {
+	switch p.Mode {
+	case models.ModeStaged:
+		return "", false
+	case models.ModeUnstaged:
+		return "", true
+	default:
+		return p.SourceCommit, false
+	}
+}
+
+// handleFileContext handles GET /api/file-context — returns the raw content of a
+// contiguous range of lines from a file, used to expand collapsed diff context
+// the way GitHub's "expand" controls do. start/end are 1-based inclusive line
+// numbers in the file's new ("right") version. Fewer lines than requested means
+// end-of-file was reached.
+func (s *Server) handleFileContext(w http.ResponseWriter, r *http.Request) {
+	p := parseDiffParams(r)
+	startStr := r.URL.Query().Get("start")
+	endStr := r.URL.Query().Get("end")
+
+	if p.RepoPath == "" || p.FilePath == "" || startStr == "" || endStr == "" {
+		writeJSONError(w, "missing required parameters", http.StatusBadRequest)
+		return
+	}
+
+	start, err := strconv.Atoi(startStr)
+	if err != nil || start < 1 {
+		writeJSONError(w, "start must be a positive integer", http.StatusBadRequest)
+		return
+	}
+	end, err := strconv.Atoi(endStr)
+	if err != nil || end < start {
+		writeJSONError(w, "end must be an integer >= start", http.StatusBadRequest)
+		return
+	}
+
+	// Branch/commit modes read content from the source commit; require it so we
+	// never silently fall back to the staged index (the empty-ref form).
+	if p.Mode != models.ModeStaged && p.Mode != models.ModeUnstaged && p.SourceCommit == "" {
+		writeJSONError(w, "source_commit is required for this diff mode", http.StatusBadRequest)
+		return
+	}
+
+	repo, exists, err := s.GetRepository(p.RepoPath)
+	if err != nil {
+		writeJSONError(w, fmt.Sprintf("failed to load repository: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		writeJSONError(w, "repository not found", http.StatusNotFound)
+		return
+	}
+
+	ref, useWorkingTree := fileContextSource(p)
+	var content string
+	if useWorkingTree {
+		content, err = repo.GetWorkingTreeFileContent(p.FilePath)
+	} else {
+		content, err = repo.GetFileContentAtRef(ref, p.FilePath)
+	}
+	if err != nil {
+		writeJSONError(w, fmt.Sprintf("failed to read file content: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	lines := splitFileLines(content)
+
+	// Slice the requested 1-based inclusive range, clamped to the file length.
+	var selected []string
+	if start <= len(lines) {
+		hi := end
+		if hi > len(lines) {
+			hi = len(lines)
+		}
+		selected = lines[start-1 : hi]
+	} else {
+		selected = []string{}
+	}
+
+	resp := struct {
+		Start int      `json:"start"`
+		Lines []string `json:"lines"`
+		EOF   bool     `json:"eof"`
+	}{
+		Start: start,
+		Lines: selected,
+		EOF:   end >= len(lines),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("handleFileContext: failed to encode JSON response: %v", err)
+	}
+}
+
+// splitFileLines splits raw file content into lines, dropping the single
+// trailing empty element produced when the content ends with a newline.
+func splitFileLines(content string) []string {
+	if content == "" {
+		return []string{}
+	}
+	lines := strings.Split(content, "\n")
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	return lines
+}
+
+// hunkGap describes the collapsed region of unchanged lines immediately above a
+// hunk (or, for the first hunk, above the start of the file). RightStart/RightEnd
+// and LeftStart/LeftEnd are 1-based inclusive line ranges on each side; they have
+// equal length because the hidden region is unchanged context.
+type hunkGap struct {
+	HasGap     bool
+	RightStart int
+	RightEnd   int
+	LeftStart  int
+	LeftEnd    int
+	Size       int
+}
+
+// bottomGap describes the collapsed region after the last hunk. Its extent is
+// unknown until the file is fetched, so only the starting line numbers are known.
+type bottomGap struct {
+	HasGap     bool
+	RightStart int
+	LeftStart  int
+}
+
+// firstLastLineNums returns the first and last non-zero values in nums.
+func firstLastLineNums(nums []int) (first, last int) {
+	for _, n := range nums {
+		if n > 0 {
+			if first == 0 {
+				first = n
+			}
+			last = n
+		}
+	}
+	return first, last
+}
+
+// computeHunkGaps derives, for a parsed file, the collapsed context region above
+// each hunk plus the trailing region after the last hunk. These drive the
+// GitHub-style "expand context" controls in the diff view.
+func computeHunkGaps(file models.DiffFile) ([]hunkGap, bottomGap) {
+	gaps := make([]hunkGap, len(file.Sections))
+	prevRightEnd, prevLeftEnd := 0, 0
+
+	for i, h := range file.Sections {
+		firstRight, lastRight := firstLastLineNums(h.LineNumbers.Right)
+		firstLeft, lastLeft := firstLastLineNums(h.LineNumbers.Left)
+
+		rs, re := prevRightEnd+1, firstRight-1
+		ls, le := prevLeftEnd+1, firstLeft-1
+
+		g := hunkGap{}
+		// Only surface a gap when both sides agree on a non-empty, equal-length
+		// region — this keeps the left/right line-number offset consistent and
+		// skips odd hunks (e.g. pure additions/deletions at a file boundary).
+		if firstRight > 0 && firstLeft > 0 && re >= rs && le >= ls && (re-rs) == (le-ls) {
+			g.HasGap = true
+			g.RightStart, g.RightEnd = rs, re
+			g.LeftStart, g.LeftEnd = ls, le
+			g.Size = re - rs + 1
+		}
+		gaps[i] = g
+
+		if lastRight > 0 {
+			prevRightEnd = lastRight
+		}
+		if lastLeft > 0 {
+			prevLeftEnd = lastLeft
+		}
+	}
+
+	bg := bottomGap{}
+	if len(file.Sections) > 0 {
+		bg.HasGap = true
+		bg.RightStart = prevRightEnd + 1
+		bg.LeftStart = prevLeftEnd + 1
+	}
+	return gaps, bg
 }
 
 // extractFilesFromDiff extracts file paths from a diff output

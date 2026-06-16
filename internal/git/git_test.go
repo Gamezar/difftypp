@@ -694,3 +694,95 @@ func TestGetRecentCommits(t *testing.T) {
 		}
 	}
 }
+
+func TestGetFileContentAtRef(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	repoDir := setupTestRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	t.Run("commit ref", func(t *testing.T) {
+		// feature branch has "initial content\nnew line"
+		content, err := repo.GetFileContentAtRef("feature", "test.txt")
+		if err != nil {
+			t.Fatalf("GetFileContentAtRef failed: %v", err)
+		}
+		if content != "initial content\nnew line" {
+			t.Errorf("Unexpected content at feature: %q", content)
+		}
+
+		// main branch has just "initial content"
+		content, err = repo.GetFileContentAtRef("main", "test.txt")
+		if err != nil {
+			t.Fatalf("GetFileContentAtRef failed: %v", err)
+		}
+		if content != "initial content" {
+			t.Errorf("Unexpected content at main: %q", content)
+		}
+	})
+
+	t.Run("staged index ref", func(t *testing.T) {
+		// Stage a change and read it back via the empty-ref (index) form
+		testFilePath := filepath.Join(repoDir, "test.txt")
+		if err := os.WriteFile(testFilePath, []byte("initial content\nstaged body"), 0644); err != nil {
+			t.Fatalf("Failed to modify test file: %v", err)
+		}
+		cmd := exec.Command("git", "-C", repoDir, "add", "test.txt")
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("Failed to stage file: %v", err)
+		}
+
+		content, err := repo.GetFileContentAtRef("", "test.txt")
+		if err != nil {
+			t.Fatalf("GetFileContentAtRef for index failed: %v", err)
+		}
+		if content != "initial content\nstaged body" {
+			t.Errorf("Unexpected staged content: %q", content)
+		}
+	})
+
+	t.Run("nonexistent file", func(t *testing.T) {
+		_, err := repo.GetFileContentAtRef("main", "nope.txt")
+		if err == nil {
+			t.Errorf("Expected error for non-existent file, got nil")
+		}
+	})
+}
+
+func TestGetWorkingTreeFileContent(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	repoDir := setupTestRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	t.Run("reads working tree file", func(t *testing.T) {
+		// Working tree is on main: "initial content"
+		content, err := repo.GetWorkingTreeFileContent("test.txt")
+		if err != nil {
+			t.Fatalf("GetWorkingTreeFileContent failed: %v", err)
+		}
+		if content != "initial content" {
+			t.Errorf("Unexpected working tree content: %q", content)
+		}
+	})
+
+	t.Run("rejects path traversal", func(t *testing.T) {
+		if _, err := repo.GetWorkingTreeFileContent("../../etc/passwd"); err == nil {
+			t.Errorf("Expected error for traversal path, got nil")
+		}
+	})
+
+	t.Run("missing file errors", func(t *testing.T) {
+		if _, err := repo.GetWorkingTreeFileContent("nope.txt"); err == nil {
+			t.Errorf("Expected error for missing file, got nil")
+		}
+	})
+}

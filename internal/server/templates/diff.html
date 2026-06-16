@@ -147,12 +147,19 @@
                             {{ $targetCommit := .TargetCommit }}
                             {{ $diffMode := .DiffMode }}
                             {{ $parsed := .SelectedFileParsed }}
+                            {{ $gaps := .HunkGaps }}
 
                             {{ range $hunkIdx, $hunk := $parsed.Sections }}
-                            {{/* Hunk header row */}}
-                            <tr class="diff-hunk-header">
-                                <td class="diff-line-num bg-blue-50 text-blue-400 text-right px-2 select-none w-12">...</td>
-                                <td class="diff-line-num bg-blue-50 text-blue-400 text-right px-2 select-none w-12">...</td>
+                            {{/* Hunk header row — hosts GitHub-style expand controls when
+                                 unchanged lines are collapsed above this hunk */}}
+                            {{ $gap := index $gaps $hunkIdx }}
+                            <tr class="diff-hunk-header{{ if $gap.HasGap }} diff-expandable{{ end }}"
+                                {{ if $gap.HasGap }}data-gap-right-start="{{$gap.RightStart}}" data-gap-right-end="{{$gap.RightEnd}}" data-gap-left-start="{{$gap.LeftStart}}" data-gap-left-end="{{$gap.LeftEnd}}"{{ end }}>
+                                <td class="diff-line-num diff-expand-cell bg-blue-50 text-blue-400 text-center px-1 select-none" colspan="2">
+                                    {{ if $gap.HasGap }}
+                                        <button type="button" class="diff-expand-btn" data-action="expand" title="Expand hidden lines" data-testid="expand-all"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8.177.677l2.896 2.896a.25.25 0 0 1-.177.427H8.75v1.25a.75.75 0 0 1-1.5 0V4H5.104a.25.25 0 0 1-.177-.427L7.823.677a.25.25 0 0 1 .354 0zM7.25 10.75a.75.75 0 0 1 1.5 0V12h2.146a.25.25 0 0 1 .177.427l-2.896 2.896a.25.25 0 0 1-.354 0l-2.896-2.896A.25.25 0 0 1 5.104 12H7.25v-1.25zm-5-2a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5zM6 8a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1 0-1.5h.5A.75.75 0 0 1 6 8zm2.25.75a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5zM12 8a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1 0-1.5h.5A.75.75 0 0 1 12 8zm2.25.75a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5z"/></svg></button>
+                                    {{ else }}...{{ end }}
+                                </td>
                                 <td class="bg-blue-50 text-blue-600 px-3 py-1 text-xs">
                                     @@ -{{$hunk.StartLine}},{{$hunk.LineCount}} @@{{ if $hunk.Context }} {{$hunk.Context}}{{ end }}
                                 </td>
@@ -254,6 +261,17 @@
 
                             {{ end }}{{/* end range lines */}}
                             {{ end }}{{/* end range sections */}}
+
+                            {{/* Bottom expander — reveals unchanged lines after the last hunk */}}
+                            {{ if .BottomGap.HasGap }}
+                            <tr class="diff-hunk-header diff-expandable diff-bottom-expander"
+                                data-gap-right-start="{{.BottomGap.RightStart}}" data-gap-left-start="{{.BottomGap.LeftStart}}">
+                                <td class="diff-line-num diff-expand-cell bg-blue-50 text-blue-400 text-center px-1 select-none" colspan="2">
+                                    <button type="button" class="diff-expand-btn" data-action="expand" title="Expand hidden lines" data-testid="expand-bottom"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8.177.677l2.896 2.896a.25.25 0 0 1-.177.427H8.75v1.25a.75.75 0 0 1-1.5 0V4H5.104a.25.25 0 0 1-.177-.427L7.823.677a.25.25 0 0 1 .354 0zM7.25 10.75a.75.75 0 0 1 1.5 0V12h2.146a.25.25 0 0 1 .177.427l-2.896 2.896a.25.25 0 0 1-.354 0l-2.896-2.896A.25.25 0 0 1 5.104 12H7.25v-1.25zm-5-2a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5zM6 8a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1 0-1.5h.5A.75.75 0 0 1 6 8zm2.25.75a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5zM12 8a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1 0-1.5h.5A.75.75 0 0 1 12 8zm2.25.75a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5z"/></svg></button>
+                                </td>
+                                <td class="bg-blue-50 text-blue-600 px-3 py-1 text-xs">&#8230;</td>
+                            </tr>
+                            {{ end }}
                         </table>
                     </div>
                     {{ else }}
@@ -596,7 +614,39 @@
         tab-size: 4;
     }
     .diff-hunk-header td { border-top: 1px solid #e5e7eb; }
-    
+
+    /* Expand-context controls (GitHub-style) */
+    .diff-expand-cell {
+        white-space: nowrap;
+        vertical-align: middle;
+        border-right: 1px solid #e5e7eb;
+    }
+    .diff-expand-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 18px;
+        margin: 0 auto;
+        padding: 0;
+        border: none;
+        border-radius: 3px;
+        background: transparent;
+        color: #2563eb;
+        line-height: 1;
+        cursor: pointer;
+    }
+    .diff-expand-btn svg { width: 13px; height: 13px; display: block; }
+    .diff-expand-btn:hover { background: #bfdbfe; color: #1d4ed8; }
+    /* Collapse ("×") control — gray, with a red "remove" hover, so it never
+       reads as another expand action. */
+    .diff-collapse-btn { color: #6b7280; }
+    .diff-collapse-btn:hover { background: #fee2e2; color: #b91c1c; }
+    .diff-expand-btn:disabled { opacity: 0.4; cursor: progress; }
+    /* Freshly revealed context lines get a faint marker so reviewers can tell
+       them apart from lines that were part of the original diff. */
+    .diff-line-expanded .diff-line-content { background: #f8fafc !important; }
+
     /* Line selection highlight */
     .diff-line.line-selected td {
         background-color: #fef3c7 !important;

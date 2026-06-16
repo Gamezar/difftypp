@@ -196,6 +196,38 @@ func splitFileList(out string) []string {
 	return files
 }
 
+// GetFileContentAtRef returns the full content of a file at a given git ref.
+// ref may be a commit hash, branch, or tag. An empty ref resolves to the
+// staged (index) version via git's "show :path" syntax, which is what the
+// "staged" diff mode compares against.
+func (r *Repository) GetFileContentAtRef(ref, filePath string) (string, error) {
+	spec := ref + ":" + filePath
+	cmd := exec.Command("git", "-C", r.Path, "show", spec)
+	var out, stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to get file content at %q: %w: %s", spec, err, strings.TrimSpace(stderr.String()))
+	}
+	return out.String(), nil
+}
+
+// GetWorkingTreeFileContent returns the on-disk content of a file in the working
+// tree. filePath is interpreted relative to the repository root; paths that
+// escape the repository (via "..") are rejected.
+func (r *Repository) GetWorkingTreeFileContent(filePath string) (string, error) {
+	cleaned := filepath.Clean(filePath)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("invalid file path: %s", filePath)
+	}
+	full := filepath.Join(r.Path, cleaned)
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return "", fmt.Errorf("failed to read working tree file %q: %w", filePath, err)
+	}
+	return string(data), nil
+}
+
 // Commit represents a git commit with its hash and subject line
 type Commit struct {
 	Hash    string

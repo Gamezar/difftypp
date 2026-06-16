@@ -9,6 +9,7 @@
  */
 
 import { initializeCommentSystem } from './comment-system'
+import { initializeContextExpansion } from './context-expansion'
 import { CursorState, initializeCursorNavigation } from './cursor-navigation'
 import { initializePastReviews } from './past-reviews'
 import { initializeSidebar } from './sidebar'
@@ -30,4 +31,5 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeStatusFilter()
   initializeSidebar()
   initializePastReviews()
+  initializeContextExpansion()
 })
