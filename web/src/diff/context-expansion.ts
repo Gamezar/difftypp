@@ -120,12 +120,17 @@ function updateControls(anchor: HTMLElement, isBottom: boolean): void {
 }
 
 /** Build a context diff row matching the server-rendered structure exactly so
- *  cursor navigation and the comment system treat it like any other line. */
-function buildContextRow(
+ *  cursor navigation and the comment system treat it like any other line. When
+ *  `split` is set it produces the four-column side-by-side structure; otherwise
+ *  the three-column unified structure. Context lines are identical on both
+ *  sides, so the same text fills the left and right content cells.
+ *  Exported for testing. */
+export function buildContextRow(
   rightNum: number,
   leftNum: number,
   content: string,
-  groupId: string
+  groupId: string,
+  split: boolean
 ): HTMLTableRowElement {
   const numClass =
     'diff-line-num text-right px-2 select-none w-12 cursor-pointer bg-gray-50 text-gray-400'
@@ -138,16 +143,34 @@ function buildContextRow(
   tr.setAttribute('data-expand-group', groupId)
 
   const left = document.createElement('td')
-  left.className = numClass
+  left.className = split ? numClass + ' diff-split-num-left' : numClass
   left.setAttribute('data-line-num', String(leftNum))
   left.setAttribute('data-side', 'left')
   left.textContent = leftNum > 0 ? String(leftNum) : ''
 
   const right = document.createElement('td')
-  right.className = numClass
+  right.className = split
+    ? numClass + ' diff-split-num-right diff-split-divider'
+    : numClass
   right.setAttribute('data-line-num', String(rightNum))
   right.setAttribute('data-side', 'right')
   right.textContent = rightNum > 0 ? String(rightNum) : ''
+
+  if (split) {
+    const leftContent = document.createElement('td')
+    leftContent.className =
+      'diff-line-content diff-split-content-left px-3 whitespace-pre-wrap bg-white'
+    leftContent.textContent = content
+
+    const rightContent = document.createElement('td')
+    rightContent.className =
+      'diff-line-content diff-split-content-right px-3 whitespace-pre-wrap bg-white'
+    rightContent.textContent = content
+
+    // Column order: left num, left content, right num, right content.
+    tr.append(left, leftContent, right, rightContent)
+    return tr
+  }
 
   const contentTd = document.createElement('td')
   contentTd.className = 'diff-line-content px-3 whitespace-pre-wrap bg-white'
@@ -265,9 +288,13 @@ async function handleExpandClick(btn: HTMLButtonElement): Promise<void> {
   }
 
   const groupId = ensureGroupId(anchor)
+  const split =
+    (anchor.closest('table') as HTMLElement | null)?.getAttribute(
+      'data-view'
+    ) === 'split'
   const rows = lines.map((content, i) => {
     const r = range.start + i
-    return buildContextRow(r, r + offset, content, groupId)
+    return buildContextRow(r, r + offset, content, groupId, split)
   })
   insertRows(anchor, groupId, rows)
 

@@ -11,8 +11,10 @@
 import { initializeCommentSystem } from './comment-system'
 import { initializeContextExpansion } from './context-expansion'
 import { CursorState, initializeCursorNavigation } from './cursor-navigation'
+import { initializeFreshnessPolling } from './freshness'
 import { initializePastReviews } from './past-reviews'
 import { initializeSidebar } from './sidebar'
+import { initializeSplitResizer } from './split-view'
 import { initializeStatusFilter } from './status-filter'
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -32,4 +34,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeSidebar()
   initializePastReviews()
   initializeContextExpansion()
+  initializeSplitResizer()
+  initializeFreshnessPolling()
 })

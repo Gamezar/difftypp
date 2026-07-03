@@ -17,6 +17,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Gamezar/difftypp/internal/git"
 	"github.com/Gamezar/difftypp/internal/models"
 )
 
@@ -126,6 +127,10 @@ func baseTestTemplates() fstest.MapFS {
 		},
 		"templates/compare.html": &fstest.MapFile{
 			Data: []byte(`{{define "compare.html"}}Compare Page{{end}}`),
+			Mode: 0644,
+		},
+		"templates/worktrees.html": &fstest.MapFile{
+			Data: []byte(`{{define "worktrees.html"}}{{range .Worktrees}}[wt branch={{.Branch}} main={{.IsMain}} bare={{.Bare}} path={{.Path}}]{{end}}{{end}}`),
 			Mode: 0644,
 		},
 		"templates/diff.html": &fstest.MapFile{
@@ -676,6 +681,220 @@ func setupRealTestServer(t *testing.T) (*Server, *MockStorage, string) {
 	})
 
 	return server, mockStorage, tempDir
+}
+
+// buildRepoWithWorktree creates a real git repo on branch "main" with one
+// linked worktree on branch "feature", under a single temp dir that is removed
+// on cleanup (so the linked worktree, which lives inside that temp dir, is
+// cleaned up too). It returns the main repo path and the linked worktree path.
+func buildRepoWithWorktree(t *testing.T) (mainPath, linkedPath string) {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	tempDir, err := os.MkdirTemp("", "diffty-worktree-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(tempDir) })
+
+	mainPath = filepath.Join(tempDir, "main")
+	linkedPath = filepath.Join(tempDir, "feature-wt")
+
+	runGit := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	if err := os.MkdirAll(mainPath, 0755); err != nil {
+		t.Fatalf("Failed to create main repo dir: %v", err)
+	}
+	runGit(mainPath, "init")
+	runGit(mainPath, "config", "--local", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(mainPath, "test.txt"), []byte("initial"), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+	runGit(mainPath, "add", "test.txt")
+	runGit(mainPath, "commit", "-m", "Initial commit")
+	runGit(mainPath, "branch", "-M", "main")
+	// Create a linked worktree on a new "feature" branch.
+	runGit(mainPath, "worktree", "add", "-b", "feature", linkedPath)
+
+	return mainPath, linkedPath
+}
+
+// setupServerWithWorktree builds a real git repo with one linked worktree,
+// registers the main repo, and returns a server using the stub templates.
+// The returned paths are the main repo and the linked worktree.
+func setupServerWithWorktree(t *testing.T) (srv *Server, store *MockStorage, mainPath, linkedPath string) {
+	t.Helper()
+
+	mainPath, linkedPath = buildRepoWithWorktree(t)
+
+	origFS := getTemplateDir
+	getTemplateDir = func() fs.FS { return baseTestTemplates() }
+	t.Cleanup(func() { getTemplateDir = origFS })
+
+	store = &MockStorage{repositories: []string{mainPath}}
+	srv, err := New(store)
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	return srv, store, mainPath, linkedPath
+}
+
+// TestHandleWorktreesListsMultiple verifies the worktrees page lists both the
+// main working tree and the linked worktree with their branches, flags, and
+// paths. Assertions use the stub template's "branch="/"main=" markers so they
+// can't be satisfied incidentally by the temp path (which itself contains
+// "main" and "feature").
+func TestHandleWorktreesListsMultiple(t *testing.T) {
+	server, _, mainPath, linkedPath := setupServerWithWorktree(t)
+
+	req := httptest.NewRequest("GET", "/worktrees?repo="+url.QueryEscape(mainPath), nil)
+	rr := httptest.NewRecorder()
+	server.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	for _, want := range []string{"branch=main", "branch=feature", "main=true", "main=false", "bare=false", linkedPath} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected worktrees page to contain %q, body: %s", want, body)
+		}
+	}
+}
+
+// TestHandleWorktreesRealTemplate renders the real embedded worktrees.html
+// (not the stub) so a regression in that template's markup is caught by the Go
+// suite, mirroring the real-template coverage compare.html has.
+func TestHandleWorktreesRealTemplate(t *testing.T) {
+	mainPath, linkedPath := buildRepoWithWorktree(t)
+
+	store := &MockStorage{repositories: []string{mainPath}}
+	server, err := New(store) // no getTemplateDir override → real embedded templates
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/worktrees?repo="+url.QueryEscape(mainPath), nil)
+	rr := httptest.NewRecorder()
+	server.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	// Structure + branch names rendered inside their span (path-independent),
+	// the main-worktree badge, and a Select link to the compare view.
+	for _, want := range []string{
+		`data-testid="worktree-list"`,
+		`data-testid="select-worktree"`,
+		`>main</span>`,
+		`>feature</span>`,
+		"main worktree",
+		"/compare?repo=",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("real worktrees template missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+	// The feature worktree's Select link must target its own path. The href uses
+	// {{urlquery .Path}}, which emits the same encoding as url.QueryEscape.
+	if !strings.Contains(body, "/compare?repo="+url.QueryEscape(linkedPath)) {
+		t.Errorf("expected a Select link targeting the linked worktree path %q\nbody: %s", linkedPath, body)
+	}
+}
+
+// TestHandleWorktreesSingleRedirects verifies a repo with only its main working
+// tree skips the worktree picker and redirects straight to the compare view.
+func TestHandleWorktreesSingleRedirects(t *testing.T) {
+	server, _, tempDir := setupRealTestServer(t)
+
+	req := httptest.NewRequest("GET", "/worktrees?repo="+url.QueryEscape(tempDir), nil)
+	rr := httptest.NewRecorder()
+	server.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect, got %d", rr.Code)
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/compare?repo=") {
+		t.Errorf("expected redirect to /compare, got %q", loc)
+	}
+	if !strings.Contains(loc, url.QueryEscape(tempDir)) {
+		t.Errorf("expected redirect to carry repo path, got %q", loc)
+	}
+}
+
+// TestHandleWorktreesNoRepoRedirects verifies a missing repo param redirects home.
+func TestHandleWorktreesNoRepoRedirects(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/worktrees", nil)
+	rr := httptest.NewRecorder()
+	server.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect, got %d", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); loc != "/" {
+		t.Errorf("expected redirect to /, got %q", loc)
+	}
+}
+
+// TestGetRepositoryAcceptsWorktree verifies GetRepository resolves a linked
+// worktree path that belongs to a registered repository, even though the
+// worktree itself is not registered.
+func TestGetRepositoryAcceptsWorktree(t *testing.T) {
+	server, _, mainPath, linkedPath := setupServerWithWorktree(t)
+
+	repo, exists, err := server.GetRepository(linkedPath)
+	if err != nil {
+		t.Fatalf("GetRepository failed: %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected linked worktree %q to resolve via registered repo %q", linkedPath, mainPath)
+	}
+	if repo.Path != linkedPath {
+		t.Errorf("expected repo path %q, got %q", linkedPath, repo.Path)
+	}
+
+	// A *separate* valid git repo that shares no repository with the registered
+	// one must not resolve. (Using a non-repo path here would only prove the
+	// IsValidRepo guard fires, not that worktree matching rejects unrelated repos.)
+	otherDir, err := os.MkdirTemp("", "diffty-unrelated-repo")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(otherDir) })
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", otherDir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+	runGit("init")
+	runGit("config", "--local", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(otherDir, "f.txt"), []byte("x"), 0644); err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+	runGit("add", "f.txt")
+	runGit("commit", "-m", "init")
+
+	if _, exists, _ := server.GetRepository(otherDir); exists {
+		t.Errorf("an unrelated valid git repo must not resolve as a registered repo's worktree")
+	}
 }
 
 // TestHandleDiffViewStagedMode tests the real handleDiffView with staged changes.
@@ -3673,4 +3892,466 @@ func TestCommentsForLine(t *testing.T) {
 			t.Errorf("expected nil, got %v", got)
 		}
 	})
+}
+
+// getDiffStatusFingerprint invokes handleDiffStatus for the given query string
+// and returns the fingerprint, failing the test on any non-200 response.
+func getDiffStatusFingerprint(t *testing.T, server *Server, query string) string {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/diff-status?"+query, nil)
+	w := httptest.NewRecorder()
+	server.handleDiffStatus(w, req)
+
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", resp.StatusCode, body)
+	}
+	var data struct {
+		Mode        string `json:"mode"`
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		t.Fatalf("failed to decode diff-status response: %v; body: %s", err, body)
+	}
+	if data.Fingerprint == "" {
+		t.Fatalf("expected non-empty fingerprint; body: %s", body)
+	}
+	return data.Fingerprint
+}
+
+// TestHandleDiffStatusBranchesDetectsAdvance verifies the fingerprint is stable
+// while the branches are unchanged and changes once the target branch advances.
+func TestHandleDiffStatusBranchesDetectsAdvance(t *testing.T) {
+	server, _, tempDir := setupRealTestServer(t)
+
+	query := fmt.Sprintf("repo=%s&source=feature&target=main&mode=branches", url.QueryEscape(tempDir))
+	baseline := getDiffStatusFingerprint(t, server, query)
+
+	// Same repo state → identical fingerprint.
+	if again := getDiffStatusFingerprint(t, server, query); again != baseline {
+		t.Errorf("fingerprint changed without any repo change: %s vs %s", baseline, again)
+	}
+
+	// Advance the target branch (main) with a new commit.
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", tempDir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "test.txt"), []byte("initial content\nmain change"), 0644); err != nil {
+		t.Fatalf("failed to modify test.txt on main: %v", err)
+	}
+	runGit("add", "test.txt")
+	runGit("commit", "-m", "advance main")
+
+	if after := getDiffStatusFingerprint(t, server, query); after == baseline {
+		t.Errorf("fingerprint did not change after the target branch advanced: %s", after)
+	}
+}
+
+// TestHandleDiffStatusStagedDetectsChange verifies that staging new content
+// changes the staged-mode fingerprint.
+func TestHandleDiffStatusStagedDetectsChange(t *testing.T) {
+	server, _, tempDir := setupRealTestServer(t)
+
+	query := fmt.Sprintf("repo=%s&mode=staged", url.QueryEscape(tempDir))
+	baseline := getDiffStatusFingerprint(t, server, query)
+
+	if err := os.WriteFile(filepath.Join(tempDir, "staged.txt"), []byte("staged"), 0644); err != nil {
+		t.Fatalf("failed to write staged.txt: %v", err)
+	}
+	cmd := exec.Command("git", "-C", tempDir, "add", "staged.txt")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to stage staged.txt: %v\n%s", err, out)
+	}
+
+	if after := getDiffStatusFingerprint(t, server, query); after == baseline {
+		t.Errorf("fingerprint did not change after staging a file: %s", after)
+	}
+}
+
+// TestHandleDiffStatusCommitsIsConstant verifies that a commit-to-commit diff,
+// comparing two pinned hashes, never reports as stale — even when the branch
+// those commits live on advances.
+func TestHandleDiffStatusCommitsIsConstant(t *testing.T) {
+	server, _, tempDir := setupRealTestServer(t)
+
+	hashOf := func(ref string) string {
+		t.Helper()
+		out, err := exec.Command("git", "-C", tempDir, "rev-parse", ref).CombinedOutput()
+		if err != nil {
+			t.Fatalf("rev-parse %s failed: %v\n%s", ref, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	source := hashOf("feature")
+	target := hashOf("main")
+
+	query := fmt.Sprintf("repo=%s&source=%s&target=%s&source_commit=%s&target_commit=%s&mode=commits",
+		url.QueryEscape(tempDir), source, target, source, target)
+	baseline := getDiffStatusFingerprint(t, server, query)
+
+	// A new commit on main must NOT affect a pinned commit-to-commit fingerprint.
+	if err := os.WriteFile(filepath.Join(tempDir, "test.txt"), []byte("initial content\nmore"), 0644); err != nil {
+		t.Fatalf("failed to modify test.txt: %v", err)
+	}
+	for _, args := range [][]string{{"add", "test.txt"}, {"commit", "-m", "new commit"}} {
+		cmd := exec.Command("git", append([]string{"-C", tempDir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	if after := getDiffStatusFingerprint(t, server, query); after != baseline {
+		t.Errorf("pinned commit-to-commit fingerprint changed: %s vs %s", baseline, after)
+	}
+}
+
+// TestHandleDiffStatusMissingRepo verifies the handler rejects a request with no
+// repository path.
+func TestHandleDiffStatusMissingRepo(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/diff-status?mode=staged", nil)
+	w := httptest.NewRecorder()
+	server.handleDiffStatus(w, req)
+
+	if got := w.Result().StatusCode; got != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing repo, got %d", got)
+	}
+}
+
+// TestHandleRecentCommits verifies the endpoint returns recent commits as JSON,
+// newest first, and reflects newly created commits.
+func TestHandleRecentCommits(t *testing.T) {
+	server, _, tempDir := setupRealTestServer(t)
+
+	type commitJSON struct {
+		Hash    string `json:"hash"`
+		Subject string `json:"subject"`
+	}
+	fetch := func() []commitJSON {
+		t.Helper()
+		reqURL := fmt.Sprintf("/api/recent-commits?repo=%s", url.QueryEscape(tempDir))
+		req := httptest.NewRequest("GET", reqURL, nil)
+		w := httptest.NewRecorder()
+		server.handleRecentCommits(w, req)
+
+		resp := w.Result()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d; body: %s", resp.StatusCode, body)
+		}
+		var data struct {
+			Commits []commitJSON `json:"commits"`
+		}
+		if err := json.Unmarshal(body, &data); err != nil {
+			t.Fatalf("failed to decode recent-commits response: %v; body: %s", err, body)
+		}
+		return data.Commits
+	}
+
+	before := fetch()
+	if len(before) == 0 {
+		t.Fatalf("expected at least one commit, got none")
+	}
+	if before[0].Subject != "Initial commit" {
+		t.Errorf("expected newest commit subject 'Initial commit', got %q", before[0].Subject)
+	}
+
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", tempDir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "newfile.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatalf("failed to write newfile.txt: %v", err)
+	}
+	runGit("add", "newfile.txt")
+	runGit("commit", "-m", "second commit")
+
+	after := fetch()
+	if len(after) != len(before)+1 {
+		t.Fatalf("expected %d commits after a new commit, got %d", len(before)+1, len(after))
+	}
+	if after[0].Subject != "second commit" {
+		t.Errorf("expected newest commit subject 'second commit', got %q", after[0].Subject)
+	}
+}
+
+// TestHandleRecentCommitsMissingRepo verifies the handler rejects a request with
+// no repository path.
+func TestHandleRecentCommitsMissingRepo(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/recent-commits", nil)
+	w := httptest.NewRecorder()
+	server.handleRecentCommits(w, req)
+
+	if got := w.Result().StatusCode; got != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing repo, got %d", got)
+	}
+}
+
+// ── Split (side-by-side) diff view ────────────────────────────────
+
+// newRealTemplateServer builds a Server backed by the real embedded templates
+// (rather than the integration stub) so tests can assert the actual rendered
+// HTML for the split/unified layouts.
+func newRealTemplateServer(t *testing.T, repos ...string) *Server {
+	t.Helper()
+	prev := getTemplateDir
+	getTemplateDir = func() fs.FS { return templateDir }
+	defer func() { getTemplateDir = prev }()
+	srv, err := New(&MockStorage{repositories: repos})
+	if err != nil {
+		t.Fatalf("failed to build server with real templates: %v", err)
+	}
+	return srv
+}
+
+func TestComputeSplitSections(t *testing.T) {
+	// A hunk with a leading context line, a 2-for-3 modified block (two
+	// deletions, three additions), and a trailing context line.
+	var h models.DiffHunk
+	h.Lines = []string{" ctxA", "-old1", "-old2", "+new1", "+new2", "+new3", " ctxB"}
+	h.LineNumbers.Left = []int{1, 2, 3, 0, 0, 0, 4}
+	h.LineNumbers.Right = []int{1, 0, 0, 2, 3, 4, 5}
+	file := models.DiffFile{Sections: []models.DiffHunk{h}}
+
+	sections := computeSplitSections(file)
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(sections))
+	}
+	got := sections[0]
+
+	want := []splitLine{
+		{LeftNum: 1, RightNum: 1, LeftContent: "ctxA", RightContent: "ctxA", LeftType: "context", RightType: "context", RowType: "context"},
+		{LeftNum: 2, RightNum: 2, LeftContent: "old1", RightContent: "new1", LeftType: "deletion", RightType: "addition", RowType: "replace"},
+		{LeftNum: 3, RightNum: 3, LeftContent: "old2", RightContent: "new2", LeftType: "deletion", RightType: "addition", RowType: "replace"},
+		{LeftNum: 0, RightNum: 4, LeftContent: "", RightContent: "new3", LeftType: "", RightType: "addition", RowType: "addition"},
+		{LeftNum: 4, RightNum: 5, LeftContent: "ctxB", RightContent: "ctxB", LeftType: "context", RightType: "context", RowType: "context"},
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d split rows, got %d: %+v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d:\n got %+v\nwant %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestComputeSplitSectionsPureDeletion(t *testing.T) {
+	// A pure-deletion block (no additions) pairs each deletion with an empty
+	// right-hand filler.
+	var h models.DiffHunk
+	h.Lines = []string{" ctx", "-gone1", "-gone2"}
+	h.LineNumbers.Left = []int{1, 2, 3}
+	h.LineNumbers.Right = []int{1, 0, 0}
+	file := models.DiffFile{Sections: []models.DiffHunk{h}}
+
+	got := computeSplitSections(file)[0]
+	want := []splitLine{
+		{LeftNum: 1, RightNum: 1, LeftContent: "ctx", RightContent: "ctx", LeftType: "context", RightType: "context", RowType: "context"},
+		{LeftNum: 2, RightNum: 0, LeftContent: "gone1", RightContent: "", LeftType: "deletion", RightType: "", RowType: "deletion"},
+		{LeftNum: 3, RightNum: 0, LeftContent: "gone2", RightContent: "", LeftType: "deletion", RightType: "", RowType: "deletion"},
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d:\n got %+v\nwant %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestGetDiffView(t *testing.T) {
+	tests := []struct {
+		name   string
+		query  string
+		cookie string
+		want   string
+	}{
+		{"default is unified", "", "", "unified"},
+		{"explicit split param", "view=split", "", "split"},
+		{"explicit unified param", "view=unified", "", "unified"},
+		{"param overrides cookie", "view=unified", "split", "unified"},
+		{"cookie fallback", "", "split", "split"},
+		{"invalid param falls back to cookie", "view=bogus", "split", "split"},
+		{"invalid cookie falls back to default", "", "bogus", "unified"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/diff?"+tt.query, nil)
+			if tt.cookie != "" {
+				req.AddCookie(&http.Cookie{Name: diffViewCookie, Value: tt.cookie})
+			}
+			if got := getDiffView(req); got != tt.want {
+				t.Errorf("getDiffView() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHandleDiffViewSplitLayout(t *testing.T) {
+	_, _, tempDir := setupRealTestServer(t)
+	srv := newRealTemplateServer(t, tempDir)
+
+	requestBody := func(query string, cookies ...*http.Cookie) (*http.Response, string) {
+		t.Helper()
+		req := httptest.NewRequest("GET", fmt.Sprintf("/diff?repo=%s&source=feature&target=main&mode=branches&file=test.txt&%s", url.QueryEscape(tempDir), query), nil)
+		for _, c := range cookies {
+			req.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		srv.handleDiffView(w, req)
+		resp := w.Result()
+		body, _ := io.ReadAll(resp.Body)
+		return resp, string(body)
+	}
+
+	t.Run("view=split renders the side-by-side table and sets the cookie", func(t *testing.T) {
+		resp, body := requestBody("view=split")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d; body: %s", resp.StatusCode, body)
+		}
+		for _, want := range []string{`diff-table-split`, `data-view="split"`, `data-testid="view-toggle-split"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("expected split body to contain %q", want)
+			}
+		}
+		var set string
+		for _, c := range resp.Cookies() {
+			if c.Name == diffViewCookie {
+				set = c.Value
+			}
+		}
+		if set != "split" {
+			t.Errorf("expected diffty_view cookie set to %q, got %q", "split", set)
+		}
+	})
+
+	t.Run("default view renders the unified table", func(t *testing.T) {
+		resp, body := requestBody("")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d; body: %s", resp.StatusCode, body)
+		}
+		if strings.Contains(body, `data-view="split"`) {
+			t.Error("expected default view to omit the split table")
+		}
+		// The unified layout still offers the toggle so users can switch.
+		if !strings.Contains(body, `data-testid="view-toggle-split"`) {
+			t.Error("expected unified body to still render the split toggle link")
+		}
+	})
+
+	t.Run("cookie alone selects the split layout without a param", func(t *testing.T) {
+		resp, body := requestBody("", &http.Cookie{Name: diffViewCookie, Value: "split"})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d; body: %s", resp.StatusCode, body)
+		}
+		if !strings.Contains(body, `data-view="split"`) {
+			t.Error("expected cookie-selected split layout to render the split table")
+		}
+	})
+}
+
+// TestComputeSplitSectionsNoNewline verifies the "\ No newline at end of file"
+// marker is skipped in split view: the changed last line stays paired as one
+// replace row and the marker never renders as source content.
+func TestComputeSplitSectionsNoNewline(t *testing.T) {
+	var h models.DiffHunk
+	h.Lines = []string{
+		"-old",
+		"\\ No newline at end of file",
+		"+new",
+		"\\ No newline at end of file",
+	}
+	h.LineNumbers.Left = []int{5, 0, 0, 0}
+	h.LineNumbers.Right = []int{0, 0, 6, 0}
+	file := models.DiffFile{Sections: []models.DiffHunk{h}}
+
+	got := computeSplitSections(file)[0]
+
+	want := []splitLine{
+		{LeftNum: 5, RightNum: 6, LeftContent: "old", RightContent: "new", LeftType: "deletion", RightType: "addition", RowType: "replace"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d split row(s), got %d: %+v", len(want), len(got), got)
+	}
+	if got[0] != want[0] {
+		t.Errorf("row 0:\n got %+v\nwant %+v", got[0], want[0])
+	}
+	for _, r := range got {
+		if strings.Contains(r.LeftContent, "No newline") || strings.Contains(r.RightContent, "No newline") {
+			t.Errorf("no-newline marker leaked into rendered content: %+v", r)
+		}
+	}
+}
+
+// TestComputeDiffFingerprintPerFileScope verifies the staged/unstaged freshness
+// fingerprint tracks only the file being viewed: an unrelated file change must
+// not move it (no false "stale" banner), while a change to the viewed file must.
+func TestComputeDiffFingerprintPerFileScope(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+	_, _, tempDir := setupRealTestServer(t)
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", tempDir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+	writeFile := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(tempDir, name), []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	// A second tracked file so an unrelated working-tree change can exist.
+	writeFile("other.txt", "other original\n")
+	runGit("add", "other.txt")
+	runGit("commit", "-m", "add other.txt")
+
+	repo := git.NewRepository(tempDir)
+	pFileA := diffParams{RepoPath: tempDir, Mode: models.ModeUnstaged, FilePath: "test.txt"}
+	pWhole := diffParams{RepoPath: tempDir, Mode: models.ModeUnstaged}
+
+	fp := func(p diffParams) string {
+		t.Helper()
+		got, err := computeDiffFingerprint(repo, p)
+		if err != nil {
+			t.Fatalf("computeDiffFingerprint: %v", err)
+		}
+		return got
+	}
+
+	// Modify the viewed file A, snapshot both per-file and whole-repo fingerprints.
+	writeFile("test.txt", "initial content\nedited A\n")
+	fpA1, fpWhole1 := fp(pFileA), fp(pWhole)
+
+	// Modify an unrelated file B.
+	writeFile("other.txt", "other original\nedited B\n")
+	fpA2, fpWhole2 := fp(pFileA), fp(pWhole)
+
+	if fpA1 != fpA2 {
+		t.Errorf("per-file fingerprint moved on an unrelated change: %q -> %q", fpA1, fpA2)
+	}
+	if fpWhole1 == fpWhole2 {
+		t.Errorf("whole-repo fingerprint should have moved on file B's change (baseline for the fix)")
+	}
+
+	// A change to the viewed file A itself must move its per-file fingerprint.
+	writeFile("test.txt", "initial content\nedited A again\n")
+	if fpA3 := fp(pFileA); fpA3 == fpA1 {
+		t.Errorf("per-file fingerprint did not move on a change to the viewed file")
+	}
 }

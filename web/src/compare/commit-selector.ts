@@ -12,6 +12,52 @@ export interface CommitSelection {
   source: string
 }
 
+/** A commit as returned by the recent-commits API. */
+export interface Commit {
+  hash: string
+  subject: string
+}
+
+/**
+ * Controls a live commit-selection list: it owns the selection state and can
+ * re-render its rows in place (preserving selection and scroll) when new
+ * commits arrive.
+ */
+export interface CommitSelectorController {
+  /** Hashes of the rows currently rendered, top to bottom. */
+  currentHashes(): string[]
+  /** Replace the rows with `commits`, preserving selection and scroll. */
+  refresh(commits: Commit[]): void
+}
+
+/** shortHash truncates a commit hash to 8 chars, matching the server's helper. */
+export function shortHash(hash: string): string {
+  return hash.length > 8 ? hash.slice(0, 8) : hash
+}
+
+/**
+ * buildCommitRow creates a commit <li> matching the server-rendered markup so
+ * refreshed rows are indistinguishable from the initial server render.
+ */
+export function buildCommitRow(commit: Commit): HTMLLIElement {
+  const li = document.createElement('li')
+  li.setAttribute('data-hash', commit.hash)
+  li.setAttribute('data-testid', 'commit-row')
+  li.className = `${BASE_CLASSES} hover:bg-gray-50`
+
+  const code = document.createElement('code')
+  code.className =
+    'text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono text-gray-600 shrink-0 pointer-events-none'
+  code.textContent = shortHash(commit.hash)
+
+  const subject = document.createElement('span')
+  subject.className = 'text-gray-700 truncate flex-1 pointer-events-none'
+  subject.textContent = commit.subject
+
+  li.append(code, subject)
+  return li
+}
+
 /** Shared base Tailwind classes applied to every commit row. */
 export const BASE_CLASSES =
   'flex items-center gap-2 py-1.5 px-2 text-sm rounded cursor-pointer transition-colors'
@@ -112,20 +158,25 @@ function applyRowState(row: HTMLElement, state: 'target' | 'source' | 'none'): v
 /**
  * Initialize the commit selector on the compare page.
  *
- * Wires click listeners on each commit row inside `#commits-list`
- * and keeps the `#target` / `#source` hidden inputs in sync.
+ * Wires click listeners on each commit row inside `#commits-list` and keeps the
+ * `#target` / `#source` inputs in sync. Returns a controller for refreshing the
+ * list in place, or null when there is no commit list on the page.
  */
-export function initializeCommitSelector(): void {
+export function initializeCommitSelector(): CommitSelectorController | null {
   const targetInput = document.getElementById('target') as HTMLInputElement | null
   const sourceInput = document.getElementById('source') as HTMLInputElement | null
   const commitsList = document.getElementById('commits-list')
-  if (!commitsList) return
+  if (!commitsList) return null
 
+  // The selection survives re-renders; rows are re-queried each pass so a
+  // refreshed list stays wired to the same selection state.
   let selection: CommitSelection = { target: '', source: '' }
-  const rows = Array.from(commitsList.querySelectorAll<HTMLElement>('li[data-hash]'))
+
+  const currentRows = () =>
+    Array.from(commitsList.querySelectorAll<HTMLElement>('li[data-hash]'))
 
   function updateAll(): void {
-    for (const row of rows) {
+    for (const row of currentRows()) {
       const hash = row.getAttribute('data-hash') ?? ''
       applyRowState(row, computeRowState(hash, selection))
     }
@@ -133,11 +184,38 @@ export function initializeCommitSelector(): void {
     if (selection.source && sourceInput) sourceInput.value = selection.source
   }
 
-  for (const row of rows) {
-    row.addEventListener('click', () => {
-      const hash = row.getAttribute('data-hash') ?? ''
-      selection = computeNextSelection(hash, selection)
+  function bindRows(): void {
+    for (const row of currentRows()) {
+      row.addEventListener('click', () => {
+        const hash = row.getAttribute('data-hash') ?? ''
+        selection = computeNextSelection(hash, selection)
+        updateAll()
+      })
+    }
+  }
+
+  bindRows()
+  updateAll()
+
+  return {
+    currentHashes(): string[] {
+      return currentRows().map(row => row.getAttribute('data-hash') ?? '')
+    },
+    refresh(commits: Commit[]): void {
+      const previous = new Set(this.currentHashes())
+      const scrollTop = commitsList.scrollTop
+
+      commitsList.replaceChildren(...commits.map(buildCommitRow))
+      bindRows()
       updateAll()
-    })
+
+      // Mark freshly arrived rows after updateAll, which rewrites className and
+      // would otherwise strip the flash class. The flash is a one-shot CSS hint.
+      for (const row of currentRows()) {
+        const hash = row.getAttribute('data-hash') ?? ''
+        if (!previous.has(hash)) row.classList.add('commit-row-new')
+      }
+      commitsList.scrollTop = scrollTop
+    },
   }
 }

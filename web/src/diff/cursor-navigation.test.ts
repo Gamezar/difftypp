@@ -879,6 +879,38 @@ describe('initializeCursorNavigation with commentApi', () => {
       press('Tab')
       expect(state.side).toBe(sideBefore)
     })
+
+    it('toggles side on split-view replace rows (both sides have content)', () => {
+      const scrollSpy = vi
+        .spyOn(Element.prototype, 'scrollIntoView')
+        .mockImplementation(() => {})
+      document.body.innerHTML = `
+        <span id="keyboard-hints"></span>
+        <table class="diff-table diff-table-split" data-view="split">
+          <tr class="diff-line diff-line-replace" data-left-num="5" data-right-num="7" data-line-type="replace">
+            <td class="diff-line-num" data-side="left" data-line-num="5">5</td>
+            <td class="diff-line-content">old</td>
+            <td class="diff-line-num" data-side="right" data-line-num="7">7</td>
+            <td class="diff-line-content">new</td>
+          </tr>
+        </table>
+      `
+      const state = initializeCursorNavigation(null, { signal: ac.signal })
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'j', bubbles: true })
+      )
+      expect(state.index).toBe(0)
+      expect(state.side).toBe('right')
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', bubbles: true })
+      )
+      expect(state.side).toBe('left')
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', bubbles: true })
+      )
+      expect(state.side).toBe('right')
+      scrollSpy.mockRestore()
+    })
   })
 
   // ── gg (double-g) jump to first line ──
