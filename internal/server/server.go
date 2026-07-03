@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -56,11 +57,23 @@ func New(storage storage.Storage) (*Server, error) {
 			return hash
 		},
 		// trimLinePrefix removes the leading +/-/space character from a diff line
-		"trimLinePrefix": func(line string) string {
-			if len(line) > 0 && (line[0] == '+' || line[0] == '-' || line[0] == ' ') {
-				return line[1:]
+		"trimLinePrefix": trimDiffPrefix,
+		// dict builds a map from alternating key/value arguments. It lets a
+		// template pass a bundle of named values to a sub-template (Go templates
+		// only accept a single data argument), e.g. {{ template "x" (dict ...) }}.
+		"dict": func(values ...interface{}) (map[string]interface{}, error) {
+			if len(values)%2 != 0 {
+				return nil, fmt.Errorf("dict: odd number of arguments")
 			}
-			return line
+			m := make(map[string]interface{}, len(values)/2)
+			for i := 0; i < len(values); i += 2 {
+				key, ok := values[i].(string)
+				if !ok {
+					return nil, fmt.Errorf("dict: key at index %d is not a string", i)
+				}
+				m[key] = values[i+1]
+			}
+			return m, nil
 		},
 		// lineType returns "addition", "deletion", or "context" based on diff line prefix
 		"lineType": func(line string) string {
@@ -223,7 +236,10 @@ func (s *Server) RemoveRepository(path string) error {
 	return nil
 }
 
-// GetRepository returns a repository by path
+// GetRepository returns a repository by path. A path is valid if it is a
+// registered repository or a worktree belonging to one — the latter lets the
+// worktrees page hand off to the compare/diff views without the worktree being
+// registered separately.
 func (s *Server) GetRepository(path string) (*git.Repository, bool, error) {
 	repos, err := s.storage.LoadRepositories()
 	if err != nil {
@@ -237,7 +253,53 @@ func (s *Server) GetRepository(path string) (*git.Repository, bool, error) {
 		}
 	}
 
+	// Accept a linked worktree of a registered repository.
+	if s.isWorktreeOfRegistered(repos, path) {
+		return git.NewRepository(path), true, nil
+	}
+
 	return nil, false, nil
+}
+
+// isWorktreeOfRegistered reports whether path is the main tree or a linked
+// worktree of a registered repository. Every worktree sharing a repository
+// reports the same set, so a single `git worktree list` on the requested path
+// yields all sibling trees — including the registered main repo — in one
+// subprocess, regardless of how many repositories are registered. This matters
+// because GetRepository runs on hot paths (e.g. handleFileContext fires on each
+// "expand context" click). Paths are compared canonically because git reports
+// symlink-resolved paths while registered paths are only made absolute.
+func (s *Server) isWorktreeOfRegistered(repos []string, path string) bool {
+	if path == "" || !git.IsValidRepo(path) {
+		return false
+	}
+
+	worktrees, err := git.NewRepository(path).GetWorktrees()
+	if err != nil {
+		return false
+	}
+
+	registered := make(map[string]struct{}, len(repos))
+	for _, repoPath := range repos {
+		registered[canonicalRepoPath(repoPath)] = struct{}{}
+	}
+	for _, wt := range worktrees {
+		if _, ok := registered[canonicalRepoPath(wt.Path)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// canonicalRepoPath normalizes a filesystem path for repository comparison.
+// git reports symlink-resolved paths in `worktree list`, whereas registered
+// repository paths are only made absolute, so it resolves symlinks when the
+// path exists and falls back to a lexical clean otherwise.
+func canonicalRepoPath(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return filepath.Clean(p)
 }
 
 // GetRepositories returns all repositories
@@ -276,10 +338,13 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("POST /api/review/submit", s.handleSubmitReview)
 	mux.HandleFunc("GET /api/review/export", s.handleExportReview)
 	mux.HandleFunc("GET /api/file-context", s.handleFileContext)
+	mux.HandleFunc("GET /api/diff-status", s.handleDiffStatus)
+	mux.HandleFunc("GET /api/recent-commits", s.handleRecentCommits)
 	mux.HandleFunc("DELETE /api/review/past", s.handleDeletePastReview)
 	mux.HandleFunc("DELETE /api/reviews/past", s.handleDeleteAllPastReviews)
 
 	// HTML routes
+	mux.HandleFunc("GET /worktrees", s.handleWorktrees)
 	mux.HandleFunc("GET /compare", s.handleCompare)
 	mux.HandleFunc("POST /compare", s.handleCompare)
 	mux.HandleFunc("GET /diff", s.handleDiffView)
@@ -352,6 +417,81 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "index.html", data)
 }
 
+// handleWorktrees lists the worktrees attached to a repository so the user can
+// pick which working tree to review before choosing a diff mode. The repo must
+// be registered (or itself a worktree of a registered repo). When a repository
+// has only its main working tree, there is nothing to choose between, so we
+// redirect straight to the compare view.
+func (s *Server) handleWorktrees(w http.ResponseWriter, r *http.Request) {
+	repoPath := r.URL.Query().Get("repo")
+	if repoPath == "" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	repo, exists, err := s.GetRepository(repoPath)
+	if err != nil {
+		s.renderError(w, "Repository Error", fmt.Sprintf("Error loading repository: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		s.renderError(w, "Not Found", "Repository not found", http.StatusNotFound)
+		return
+	}
+
+	worktrees, err := repo.GetWorktrees()
+	if err != nil {
+		// The worktree picker is an optional convenience layered in front of the
+		// compare view; if git can't enumerate worktrees, fall back to the direct
+		// compare flow rather than dead-ending on an error page.
+		http.Redirect(w, r, "/compare?repo="+url.QueryEscape(repoPath), http.StatusSeeOther)
+		return
+	}
+
+	// Bare entries have no working tree and cannot be diffed, so they are not
+	// offered as review targets. Each row links to compare keyed on the path the
+	// worktree should be reviewed under: for the tree that corresponds to the
+	// registered repository, that's the registered path (reviews are stored under
+	// it, and git's list reports a symlink-resolved path that may differ);
+	// linked worktrees use their own git-reported path.
+	regCanonical := canonicalRepoPath(repoPath)
+	selectable := make([]map[string]interface{}, 0, len(worktrees))
+	for _, wt := range worktrees {
+		if wt.Bare {
+			continue
+		}
+		selectPath := wt.Path
+		if canonicalRepoPath(wt.Path) == regCanonical {
+			selectPath = repoPath
+		}
+		selectable = append(selectable, map[string]interface{}{
+			"Branch":     wt.Branch,
+			"Path":       wt.Path,
+			"IsMain":     wt.IsMain,
+			"Bare":       wt.Bare,
+			"SelectPath": selectPath,
+		})
+	}
+
+	// Only the main working tree — nothing to navigate, go straight to compare.
+	if len(selectable) <= 1 {
+		http.Redirect(w, r, "/compare?repo="+url.QueryEscape(repoPath), http.StatusSeeOther)
+		return
+	}
+
+	data := map[string]interface{}{
+		"RepoName":  filepath.Base(repoPath),
+		"RepoPath":  repoPath,
+		"Worktrees": selectable,
+	}
+
+	s.render(w, "worktrees.html", data)
+}
+
+// recentCommitsLimit is how many commits the commit-selection page lists, both
+// on the initial server render and on each auto-refresh poll, so the two agree.
+const recentCommitsLimit = 20
+
 // getDiffMode reads and validates the mode query parameter, defaulting to branches
 func getDiffMode(r *http.Request) string {
 	mode := r.URL.Query().Get("mode")
@@ -361,6 +501,38 @@ func getDiffMode(r *http.Request) string {
 	default:
 		return models.ModeBranches
 	}
+}
+
+// diffViewCookie is the cookie name used to persist the reviewer's preferred
+// diff layout (unified vs. split) across file navigation.
+const diffViewCookie = "diffty_view"
+
+// getDiffView resolves the diff layout mode for a request. An explicit ?view=
+// query parameter wins (so links and tests can force a mode); otherwise the
+// persisted cookie preference is used, defaulting to the unified layout.
+func getDiffView(r *http.Request) string {
+	switch r.URL.Query().Get("view") {
+	case "split":
+		return "split"
+	case "unified":
+		return "unified"
+	}
+	if c, err := r.Cookie(diffViewCookie); err == nil {
+		if c.Value == "split" || c.Value == "unified" {
+			return c.Value
+		}
+	}
+	return "unified"
+}
+
+// trimDiffPrefix removes the leading +/-/space marker from a raw diff line,
+// leaving the underlying source text. Lines without one of those markers (e.g.
+// the "\ No newline at end of file" marker) are returned unchanged.
+func trimDiffPrefix(line string) string {
+	if len(line) > 0 && (line[0] == '+' || line[0] == '-' || line[0] == ' ') {
+		return line[1:]
+	}
+	return line
 }
 
 // diffParams holds the common query parameters used across review handlers
@@ -628,7 +800,7 @@ func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 
 	// For commits mode, load recent commits for the UI
 	if mode == models.ModeCommits {
-		commits, err := repo.GetRecentCommits(20)
+		commits, err := repo.GetRecentCommits(recentCommitsLimit)
 		if err != nil {
 			// Non-fatal: just show empty list
 			commits = []git.Commit{}
@@ -997,6 +1169,21 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 		"ReviewState":  reviewState,
 	}
 
+	// Resolve the diff layout (unified vs. split). An explicit ?view= param is
+	// persisted to a cookie so the choice survives file-to-file navigation, whose
+	// links don't carry the parameter.
+	diffView := getDiffView(r)
+	if qv := r.URL.Query().Get("view"); qv == "split" || qv == "unified" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     diffViewCookie,
+			Value:    qv,
+			Path:     "/",
+			MaxAge:   365 * 24 * 60 * 60,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
+	data["DiffView"] = diffView
+
 	// Build the sidebar file list from git's --name-only output. This avoids
 	// fetching and parsing the entire changeset on every file view — the diff
 	// for the selected file is fetched on its own below.
@@ -1072,6 +1259,9 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		data["PastReviewsWithComments"] = pastReviewsWithComments
+		if fp, fpErr := computeDiffFingerprint(repo, p); fpErr == nil {
+			data["DiffFingerprint"] = fp
+		}
 		s.render(w, "diff.html", data)
 		return
 	}
@@ -1110,6 +1300,12 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 		hunkGaps, bottomGap := computeHunkGaps(*selectedFile)
 		data["HunkGaps"] = hunkGaps
 		data["BottomGap"] = bottomGap
+
+		// Precompute aligned side-by-side rows for the split layout only when it
+		// is the active view — the unified layout renders straight from Sections.
+		if diffView == "split" {
+			data["SplitSections"] = computeSplitSections(*selectedFile)
+		}
 
 		// Reconstruct raw diff lines from parsed hunks for the fallback raw view
 		var diffLines []string
@@ -1182,6 +1378,13 @@ func (s *Server) handleDiffView(w http.ResponseWriter, r *http.Request) {
 				data["NextFilePath"] = files[currentIndex+1]["Path"]
 			}
 		}
+	}
+
+	// Seed the freshness poller with the fingerprint of the exact diff state this
+	// page is rendered against, so it can detect a change that lands between
+	// render and its first poll (rather than baselining from that first poll).
+	if fp, fpErr := computeDiffFingerprint(repo, p); fpErr == nil {
+		data["DiffFingerprint"] = fp
 	}
 
 	s.render(w, "diff.html", data)
@@ -1289,6 +1492,159 @@ func (s *Server) handleFileContext(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleDiffStatus handles GET /api/diff-status — it returns an opaque
+// fingerprint of the diff the client is currently viewing. A diff page pins the
+// branch tips it resolved (branches mode) or is computed against the HEAD /
+// working-tree snapshot that was current when it loaded (staged/unstaged). When
+// the branch advances or the working tree changes underneath the reviewer, the
+// on-screen diff silently goes stale. The page polls this endpoint and, when
+// the fingerprint changes, prompts the reviewer to reload rather than showing a
+// stale view. Commits mode compares two pinned hashes and can never go stale.
+func (s *Server) handleDiffStatus(w http.ResponseWriter, r *http.Request) {
+	p := parseDiffParams(r)
+	if p.RepoPath == "" {
+		writeJSONError(w, "repo is required", http.StatusBadRequest)
+		return
+	}
+	// Branches mode resolves the diff from branch names; without them there is
+	// nothing to re-resolve against.
+	if p.Mode == models.ModeBranches && (p.SourceBranch == "" || p.TargetBranch == "") {
+		writeJSONError(w, "source and target are required for branch diffs", http.StatusBadRequest)
+		return
+	}
+
+	repo, exists, err := s.GetRepository(p.RepoPath)
+	if err != nil {
+		writeJSONError(w, fmt.Sprintf("failed to load repository: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		writeJSONError(w, "repository not found", http.StatusNotFound)
+		return
+	}
+
+	fingerprint, err := computeDiffFingerprint(repo, p)
+	if err != nil {
+		writeJSONError(w, fmt.Sprintf("failed to compute diff status: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	resp := struct {
+		Mode        string `json:"mode"`
+		Fingerprint string `json:"fingerprint"`
+	}{
+		Mode:        p.Mode,
+		Fingerprint: fingerprint,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("handleDiffStatus: failed to encode JSON response: %v", err)
+	}
+}
+
+// computeDiffFingerprint returns a token that changes whenever the diff the
+// reviewer is looking at would change, so the client can detect staleness by
+// comparing successive values. The inputs differ per mode:
+//   - branches:  the current commit hashes the two branch names resolve to
+//   - commits:   the two pinned commit hashes (constant — never stale)
+//   - staged:    HEAD plus the selected file's staged diff (whole diff if none)
+//   - unstaged:  HEAD plus the selected file's working-tree diff (whole if none)
+//
+// The staged/unstaged fingerprint covers only the file being viewed (when one is
+// selected) so an unrelated change elsewhere in the repo doesn't false-alarm the
+// reviewer with a "stale" banner. HEAD is folded in so committing the very
+// changes under review (which empties or reshapes the diff) is also detected.
+func computeDiffFingerprint(repo *git.Repository, p diffParams) (string, error) {
+	switch p.Mode {
+	case models.ModeStaged, models.ModeUnstaged:
+		head, err := repo.GetBranchCommitHash("HEAD")
+		if err != nil {
+			return "", err
+		}
+		var diff string
+		if p.FilePath != "" {
+			diff, err = getFileDiffForMode(repo, p, p.FilePath)
+		} else {
+			diff, err = getDiffForMode(repo, p)
+		}
+		if err != nil {
+			return "", err
+		}
+		return fingerprintParts(head, diff), nil
+
+	case models.ModeCommits:
+		return fingerprintParts(p.SourceCommit, p.TargetCommit), nil
+
+	default: // branches
+		source, err := repo.GetBranchCommitHash(p.SourceBranch)
+		if err != nil {
+			return "", err
+		}
+		target, err := repo.GetBranchCommitHash(p.TargetBranch)
+		if err != nil {
+			return "", err
+		}
+		return fingerprintParts(source, target), nil
+	}
+}
+
+// handleRecentCommits handles GET /api/recent-commits — it returns the
+// repository's most recent commits as JSON. The commit-selection page polls
+// this so newly created commits appear in the list without a full page reload.
+func (s *Server) handleRecentCommits(w http.ResponseWriter, r *http.Request) {
+	repoPath := r.URL.Query().Get("repo")
+	if repoPath == "" {
+		writeJSONError(w, "repo is required", http.StatusBadRequest)
+		return
+	}
+
+	repo, exists, err := s.GetRepository(repoPath)
+	if err != nil {
+		writeJSONError(w, fmt.Sprintf("failed to load repository: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		writeJSONError(w, "repository not found", http.StatusNotFound)
+		return
+	}
+
+	commits, err := repo.GetRecentCommits(recentCommitsLimit)
+	if err != nil {
+		writeJSONError(w, fmt.Sprintf("failed to load recent commits: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	type commitJSON struct {
+		Hash    string `json:"hash"`
+		Subject string `json:"subject"`
+	}
+	out := make([]commitJSON, 0, len(commits))
+	for _, c := range commits {
+		out = append(out, commitJSON{Hash: c.Hash, Subject: c.Subject})
+	}
+
+	resp := struct {
+		Commits []commitJSON `json:"commits"`
+	}{Commits: out}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("handleRecentCommits: failed to encode JSON response: %v", err)
+	}
+}
+
+// fingerprintParts hashes its parts into a hex digest, separating them with a
+// NUL byte so distinct part boundaries can never collide.
+func fingerprintParts(parts ...string) string {
+	h := sha256.New()
+	for _, part := range parts {
+		h.Write([]byte(part))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // splitFileLines splits raw file content into lines, dropping the single
 // trailing empty element produced when the content ends with a newline.
 func splitFileLines(content string) []string {
@@ -1377,6 +1733,100 @@ func computeHunkGaps(file models.DiffFile) ([]hunkGap, bottomGap) {
 		bg.LeftStart = prevLeftEnd + 1
 	}
 	return gaps, bg
+}
+
+// splitLine is one visual row of the side-by-side ("split") diff view. Each row
+// pairs an old-side line with a new-side line: deletions sit on the left,
+// additions on the right, unchanged context on both sides, and a modified block
+// pairs its deletions with its additions row-for-row. Leftover lines get an
+// empty (filler) cell on the opposite side.
+type splitLine struct {
+	LeftNum      int
+	RightNum     int
+	LeftContent  string
+	RightContent string
+	LeftType     string // "context", "deletion", or "" when the left cell is a filler
+	RightType    string // "context", "addition", or "" when the right cell is a filler
+	RowType      string // "context", "addition", "deletion", or "replace"
+}
+
+// computeSplitSections converts each parsed hunk into aligned side-by-side rows
+// for the split diff view. The returned slice is index-aligned with
+// file.Sections so the template can pair every hunk with its expand controls.
+func computeSplitSections(file models.DiffFile) [][]splitLine {
+	sections := make([][]splitLine, len(file.Sections))
+	for si, h := range file.Sections {
+		var rows []splitLine
+
+		// A change block is a run of deletions followed by additions (git emits
+		// them in that order). It is flushed on the next context line or at the
+		// end of the hunk, pairing deletions with additions row-for-row.
+		var dels, adds []splitLine
+		flush := func() {
+			n := len(dels)
+			if len(adds) > n {
+				n = len(adds)
+			}
+			for i := 0; i < n; i++ {
+				row := splitLine{RowType: "replace"}
+				if i < len(dels) {
+					row.LeftNum = dels[i].LeftNum
+					row.LeftContent = dels[i].LeftContent
+					row.LeftType = "deletion"
+				}
+				if i < len(adds) {
+					row.RightNum = adds[i].RightNum
+					row.RightContent = adds[i].RightContent
+					row.RightType = "addition"
+				}
+				switch {
+				case row.LeftType == "":
+					row.RowType = "addition"
+				case row.RightType == "":
+					row.RowType = "deletion"
+				}
+				rows = append(rows, row)
+			}
+			dels = dels[:0]
+			adds = adds[:0]
+		}
+
+		for li, raw := range h.Lines {
+			leftNum, rightNum := 0, 0
+			if li < len(h.LineNumbers.Left) {
+				leftNum = h.LineNumbers.Left[li]
+			}
+			if li < len(h.LineNumbers.Right) {
+				rightNum = h.LineNumbers.Right[li]
+			}
+			content := trimDiffPrefix(raw)
+			switch {
+			case strings.HasPrefix(raw, "\\"):
+				// "\ No newline at end of file" is a meta-marker attached to the
+				// adjacent line, not a source line. Skip it entirely so it neither
+				// renders as content nor splits an otherwise-pairable change block.
+				continue
+			case strings.HasPrefix(raw, "+"):
+				adds = append(adds, splitLine{RightNum: rightNum, RightContent: content})
+			case strings.HasPrefix(raw, "-"):
+				dels = append(dels, splitLine{LeftNum: leftNum, LeftContent: content})
+			default: // context: space-prefixed or blank
+				flush()
+				rows = append(rows, splitLine{
+					LeftNum:      leftNum,
+					RightNum:     rightNum,
+					LeftContent:  content,
+					RightContent: content,
+					LeftType:     "context",
+					RightType:    "context",
+					RowType:      "context",
+				})
+			}
+		}
+		flush()
+		sections[si] = rows
+	}
+	return sections
 }
 
 // extractFilesFromDiff extracts file paths from a diff output

@@ -600,11 +600,14 @@ export function initializeCursorNavigation(
       return true
     }
 
-    // Tab — toggle side on context lines
+    // Tab — toggle side on rows that carry both an old and a new line: unified
+    // context lines, and split-view "replace" rows (a deletion paired with an
+    // addition side by side).
     if (event.key === 'Tab' && state.index >= 0) {
       event.preventDefault()
       const curRow = diffLines[state.index]
-      if (curRow.getAttribute('data-line-type') === 'context') {
+      const lineType = curRow.getAttribute('data-line-type')
+      if (lineType === 'context' || lineType === 'replace') {
         state.side = state.side === 'right' ? 'left' : 'right'
         applyCursor(state, diffLines)
         updateFooterForState()

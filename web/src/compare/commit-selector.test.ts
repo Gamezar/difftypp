@@ -3,6 +3,8 @@ import {
   computeRowState,
   computeNextSelection,
   buildBadgeHtml,
+  buildCommitRow,
+  shortHash,
   BASE_CLASSES,
   initializeCommitSelector,
 } from './commit-selector'
@@ -236,5 +238,109 @@ describe('initializeCommitSelector (DOM integration)', () => {
     expect(row2.className).toContain('hover:bg-gray-50')
     expect(row2.className).not.toContain('bg-blue-50')
     expect(row2.className).not.toContain('bg-green-50')
+  })
+
+  it('returns null when there is no commit list', () => {
+    document.body.innerHTML = ''
+    expect(initializeCommitSelector()).toBeNull()
+  })
+
+  it('returns a controller exposing the current hashes', () => {
+    const controller = initializeCommitSelector()!
+    expect(controller.currentHashes()).toEqual(['abc123', 'def456', 'ghi789'])
+  })
+})
+
+// ── Row construction ─────────────────────────────────────────────
+
+describe('shortHash', () => {
+  it('truncates long hashes to 8 chars', () => {
+    expect(shortHash('0123456789abcdef')).toBe('01234567')
+  })
+
+  it('leaves short hashes untouched', () => {
+    expect(shortHash('abc')).toBe('abc')
+  })
+})
+
+describe('buildCommitRow', () => {
+  it('builds an li matching the server markup', () => {
+    const li = buildCommitRow({ hash: '0123456789ab', subject: 'Fix bug' })
+    expect(li.tagName).toBe('LI')
+    expect(li.getAttribute('data-hash')).toBe('0123456789ab')
+    expect(li.getAttribute('data-testid')).toBe('commit-row')
+    expect(li.querySelector('code')!.textContent).toBe('01234567')
+    expect(li.querySelector('span')!.textContent).toBe('Fix bug')
+  })
+})
+
+// ── Live refresh ─────────────────────────────────────────────────
+
+describe('commit selector refresh', () => {
+  const COMMITS_HTML = `
+    <input type="text" id="target" value="">
+    <input type="text" id="source" value="">
+    <ul id="commits-list">
+      <li data-hash="abc123" data-testid="commit-row" class="${BASE_CLASSES} hover:bg-gray-50">
+        <code>abc123</code><span>First</span>
+      </li>
+      <li data-hash="def456" data-testid="commit-row" class="${BASE_CLASSES} hover:bg-gray-50">
+        <code>def456</code><span>Second</span>
+      </li>
+    </ul>
+  `
+
+  beforeEach(() => {
+    document.body.innerHTML = COMMITS_HTML
+  })
+
+  it('prepends a new commit and flashes only the new row', () => {
+    const controller = initializeCommitSelector()!
+    controller.refresh([
+      { hash: 'new789', subject: 'Newest' },
+      { hash: 'abc123', subject: 'First' },
+      { hash: 'def456', subject: 'Second' },
+    ])
+
+    expect(controller.currentHashes()).toEqual(['new789', 'abc123', 'def456'])
+    const newRow = document.querySelector('li[data-hash="new789"]')!
+    const oldRow = document.querySelector('li[data-hash="abc123"]')!
+    expect(newRow.className).toContain('commit-row-new')
+    expect(oldRow.className).not.toContain('commit-row-new')
+  })
+
+  it('preserves the current selection across a refresh', () => {
+    const controller = initializeCommitSelector()!
+    // Select abc123 as target.
+    document
+      .querySelector('li[data-hash="abc123"]')!
+      .dispatchEvent(new Event('click', { bubbles: true }))
+
+    controller.refresh([
+      { hash: 'new789', subject: 'Newest' },
+      { hash: 'abc123', subject: 'First' },
+      { hash: 'def456', subject: 'Second' },
+    ])
+
+    const targetInput = document.getElementById('target') as HTMLInputElement
+    expect(targetInput.value).toBe('abc123')
+    const reselected = document.querySelector('li[data-hash="abc123"]')!
+    expect(reselected.className).toContain('bg-blue-50')
+    expect(reselected.querySelector('.commit-badge')!.textContent).toBe('Target')
+  })
+
+  it('keeps click selection working on refreshed rows', () => {
+    const controller = initializeCommitSelector()!
+    controller.refresh([
+      { hash: 'new789', subject: 'Newest' },
+      { hash: 'abc123', subject: 'First' },
+    ])
+
+    document
+      .querySelector('li[data-hash="new789"]')!
+      .dispatchEvent(new Event('click', { bubbles: true }))
+
+    const targetInput = document.getElementById('target') as HTMLInputElement
+    expect(targetInput.value).toBe('new789')
   })
 })

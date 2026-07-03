@@ -268,3 +268,65 @@ func (r *Repository) GetRecentCommits(n int) ([]Commit, error) {
 
 	return commits, nil
 }
+
+// Worktree represents a single git worktree: the repository's main working tree
+// or a linked worktree created via `git worktree add`.
+type Worktree struct {
+	Path   string // absolute path to the worktree's root directory
+	Branch string // checked-out branch (short name); empty when detached or bare
+	Head   string // commit hash currently checked out in the worktree
+	IsMain bool   // true for the repository's main working tree
+	Bare   bool   // true for a bare repository's entry (it has no working tree)
+}
+
+// GetWorktrees returns every worktree attached to the repository, parsed from
+// `git worktree list --porcelain`. The main working tree is listed first with
+// IsMain set; any linked worktrees follow in the order git reports them. This
+// works identically whether r.Path points at the main tree or a linked one,
+// since worktrees share a single repository.
+func (r *Repository) GetWorktrees() ([]Worktree, error) {
+	cmd := exec.Command("git", "-C", r.Path, "worktree", "list", "--porcelain")
+	var out, stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to list worktrees: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	return parseWorktrees(out.String()), nil
+}
+
+// parseWorktrees parses the porcelain output of `git worktree list --porcelain`.
+// Entries are separated by blank lines; each starts with a "worktree <path>"
+// line followed by attribute lines (HEAD, branch, detached, bare, locked, ...).
+func parseWorktrees(out string) []Worktree {
+	var worktrees []Worktree
+	var cur *Worktree
+
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			// A "worktree" line begins a new entry; flush the previous one first.
+			if cur != nil {
+				worktrees = append(worktrees, *cur)
+			}
+			cur = &Worktree{
+				Path:   strings.TrimPrefix(line, "worktree "),
+				IsMain: len(worktrees) == 0, // git always lists the main tree first
+			}
+		case cur == nil:
+			continue
+		case strings.HasPrefix(line, "HEAD "):
+			cur.Head = strings.TrimPrefix(line, "HEAD ")
+		case strings.HasPrefix(line, "branch "):
+			cur.Branch = strings.TrimPrefix(strings.TrimPrefix(line, "branch "), "refs/heads/")
+		case line == "bare":
+			cur.Bare = true
+		}
+	}
+	if cur != nil {
+		worktrees = append(worktrees, *cur)
+	}
+
+	return worktrees
+}

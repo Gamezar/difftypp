@@ -753,6 +753,128 @@ func TestGetFileContentAtRef(t *testing.T) {
 	})
 }
 
+func TestParseWorktrees(t *testing.T) {
+	t.Run("main and linked worktree", func(t *testing.T) {
+		out := "worktree /home/me/repo\n" +
+			"HEAD aaaa1111\n" +
+			"branch refs/heads/main\n" +
+			"\n" +
+			"worktree /home/me/repo-feature\n" +
+			"HEAD bbbb2222\n" +
+			"branch refs/heads/feature\n" +
+			"\n"
+
+		wts := parseWorktrees(out)
+		if len(wts) != 2 {
+			t.Fatalf("expected 2 worktrees, got %d: %+v", len(wts), wts)
+		}
+
+		if wts[0].Path != "/home/me/repo" || wts[0].Branch != "main" || wts[0].Head != "aaaa1111" || !wts[0].IsMain {
+			t.Errorf("unexpected main worktree: %+v", wts[0])
+		}
+		if wts[1].Path != "/home/me/repo-feature" || wts[1].Branch != "feature" || wts[1].Head != "bbbb2222" || wts[1].IsMain {
+			t.Errorf("unexpected linked worktree: %+v", wts[1])
+		}
+	})
+
+	t.Run("detached and bare entries", func(t *testing.T) {
+		out := "worktree /home/me/bare\n" +
+			"bare\n" +
+			"\n" +
+			"worktree /home/me/wt-detached\n" +
+			"HEAD cccc3333\n" +
+			"detached\n" +
+			"\n"
+
+		wts := parseWorktrees(out)
+		if len(wts) != 2 {
+			t.Fatalf("expected 2 worktrees, got %d: %+v", len(wts), wts)
+		}
+		if !wts[0].Bare || !wts[0].IsMain || wts[0].Branch != "" {
+			t.Errorf("unexpected bare worktree: %+v", wts[0])
+		}
+		if wts[1].Branch != "" || wts[1].Head != "cccc3333" || wts[1].IsMain {
+			t.Errorf("unexpected detached worktree: %+v", wts[1])
+		}
+	})
+
+	t.Run("empty output", func(t *testing.T) {
+		if wts := parseWorktrees(""); len(wts) != 0 {
+			t.Errorf("expected no worktrees, got %+v", wts)
+		}
+	})
+}
+
+func TestGetWorktrees(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	repoDir := setupTestRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	t.Run("main tree only", func(t *testing.T) {
+		wts, err := repo.GetWorktrees()
+		if err != nil {
+			t.Fatalf("GetWorktrees failed: %v", err)
+		}
+		if len(wts) != 1 {
+			t.Fatalf("expected 1 worktree, got %d: %+v", len(wts), wts)
+		}
+		if !wts[0].IsMain {
+			t.Errorf("expected the sole worktree to be main: %+v", wts[0])
+		}
+		if wts[0].Branch != "main" {
+			t.Errorf("expected branch 'main', got %q", wts[0].Branch)
+		}
+	})
+
+	t.Run("with a linked worktree", func(t *testing.T) {
+		// Add a linked worktree checking out the existing "feature" branch.
+		linkedPath := filepath.Join(filepath.Dir(repoDir), "diffty-wt-"+filepath.Base(repoDir))
+		cmd := exec.Command("git", "-C", repoDir, "worktree", "add", linkedPath, "feature")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git worktree add failed: %v\n%s", err, out)
+		}
+		defer func() {
+			exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", linkedPath).Run()
+			os.RemoveAll(linkedPath)
+		}()
+
+		wts, err := repo.GetWorktrees()
+		if err != nil {
+			t.Fatalf("GetWorktrees failed: %v", err)
+		}
+		if len(wts) != 2 {
+			t.Fatalf("expected 2 worktrees, got %d: %+v", len(wts), wts)
+		}
+
+		// Main tree is always listed first.
+		if !wts[0].IsMain || wts[0].Branch != "main" {
+			t.Errorf("unexpected main worktree: %+v", wts[0])
+		}
+
+		// The linked worktree should report the feature branch and not be main.
+		var linked *Worktree
+		for i := range wts {
+			if wts[i].Branch == "feature" {
+				linked = &wts[i]
+			}
+		}
+		if linked == nil {
+			t.Fatalf("feature worktree not found in %+v", wts)
+		}
+		if linked.IsMain {
+			t.Errorf("linked worktree should not be marked main: %+v", linked)
+		}
+		if len(linked.Head) != 40 || !isHexString(linked.Head) {
+			t.Errorf("invalid HEAD on linked worktree: %q", linked.Head)
+		}
+	})
+}
+
 func TestGetWorkingTreeFileContent(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git command not available, skipping test")

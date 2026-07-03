@@ -161,5 +161,15 @@
     {{end}}
 </div>
 
+<style>
+    /* One-shot highlight applied by commit-selector.ts to commit rows that
+       arrive via an auto-refresh, so a silently growing list is noticeable. */
+    @keyframes commit-row-flash {
+        from { background-color: #fef9c3; }
+        to { background-color: transparent; }
+    }
+    .commit-row-new { animation: commit-row-flash 1.6s ease-out; }
+</style>
+
 <script src="/static/js/compare.js"></script>
 {{end}}
