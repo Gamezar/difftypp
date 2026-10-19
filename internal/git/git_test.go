@@ -167,6 +167,63 @@ func TestGetBranches(t *testing.T) {
 	}
 }
 
+func TestGetCurrentBranch(t *testing.T) {
+	// Skip if git is not available
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	// setupTestRepo leaves HEAD on the "main" branch
+	repoDir := setupTestRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	branch, err := repo.GetCurrentBranch()
+	if err != nil {
+		t.Fatalf("GetCurrentBranch failed: %v", err)
+	}
+	if branch != "main" {
+		t.Errorf("Expected current branch 'main', got '%s'", branch)
+	}
+
+	// Switching branches must be reflected in the reported current branch.
+	cmd := exec.Command("git", "-C", repoDir, "checkout", "feature")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to switch to feature branch: %v", err)
+	}
+
+	branch, err = repo.GetCurrentBranch()
+	if err != nil {
+		t.Fatalf("GetCurrentBranch failed: %v", err)
+	}
+	if branch != "feature" {
+		t.Errorf("Expected current branch 'feature', got '%s'", branch)
+	}
+}
+
+func TestGetDefaultBranch(t *testing.T) {
+	// Skip if git is not available
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git command not available, skipping test")
+	}
+
+	// setupTestRepo has local branches main + feature and no remote, so the
+	// default should resolve to "main" via the common-names fallback.
+	repoDir := setupTestRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	repo := NewRepository(repoDir)
+
+	branch, err := repo.GetDefaultBranch()
+	if err != nil {
+		t.Fatalf("GetDefaultBranch failed: %v", err)
+	}
+	if branch != "main" {
+		t.Errorf("Expected default branch 'main', got '%s'", branch)
+	}
+}
+
 func TestGetBranchCommitHash(t *testing.T) {
 	// Skip if git is not available
 	if _, err := exec.LookPath("git"); err != nil {

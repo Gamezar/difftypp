@@ -1474,6 +1474,45 @@ func TestCompareBranchesModeNoCommitsList(t *testing.T) {
 	}
 }
 
+// TestHandleCompareBranchDefaults verifies the branches-mode GET pre-selects
+// useful defaults when no source/target are supplied: the target is the
+// repository's default branch (main) and the source is the branch currently
+// checked out (feature). The real compare.html marks the chosen <option> with
+// "selected", so the rendered attributes are asserted directly.
+func TestHandleCompareBranchDefaults(t *testing.T) {
+	srv, _, tempDir := setupRealTemplateTestServer(t)
+
+	// setupRealTemplateTestServer leaves HEAD on main; check out feature so the
+	// "current branch" the source should default to differs from the target.
+	cmd := exec.Command("git", "-C", tempDir, "checkout", "feature")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout feature failed: %v\n%s", err, out)
+	}
+
+	reqURL := fmt.Sprintf("/compare?repo=%s&mode=branches", url.QueryEscape(tempDir))
+	req := httptest.NewRequest("GET", reqURL, nil)
+	w := httptest.NewRecorder()
+
+	srv.handleCompare(w, req)
+
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+	bodyStr := string(body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d; body: %s", resp.StatusCode, bodyStr)
+	}
+
+	// Target select should have main selected; source select should have feature
+	// selected. Each substring is produced only by the option that is chosen.
+	if !strings.Contains(bodyStr, `value="main" selected`) {
+		t.Errorf("Expected target branch 'main' to be selected, body: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, `value="feature" selected`) {
+		t.Errorf("Expected source branch 'feature' to be selected, body: %s", bodyStr)
+	}
+}
+
 // TestHandleDiffViewStagedNoDiff tests the diff view handler in staged mode when
 // the working tree is clean and nothing is staged, expecting NoDiff=true.
 func TestHandleDiffViewStagedNoDiff(t *testing.T) {
@@ -1758,6 +1797,125 @@ func TestHandleAddComment(t *testing.T) {
 
 		if w.Result().StatusCode != http.StatusBadRequest {
 			t.Errorf("Expected 400 for invalid end_line, got %d", w.Result().StatusCode)
+		}
+	})
+}
+
+// TestHandleEditComment tests editing a comment's body
+func TestHandleEditComment(t *testing.T) {
+	server, mockStorage := setupTestServer(t)
+
+	t.Run("happy path updates comment body and redirects", func(t *testing.T) {
+		mockStorage.review = &models.Review{
+			RepoPath:     "/test/repo",
+			SourceCommit: "abc123",
+			TargetCommit: "def456",
+			Comments: []models.ReviewComment{
+				{ID: "comment-1", FilePath: "main.go", StartLine: 10, EndLine: 10, Body: "Original text", Status: "open"},
+			},
+			Status: "draft",
+		}
+		mockStorage.saveCalled = false
+
+		params := url.Values{}
+		params.Set("repo", "/test/repo")
+		params.Set("source_commit", "abc123")
+		params.Set("target_commit", "def456")
+		params.Set("comment_id", "comment-1")
+		params.Set("file", "main.go")
+
+		formData := url.Values{}
+		formData.Set("body", "Updated text")
+
+		reqURL := "/api/review/comment?" + params.Encode()
+		req := httptest.NewRequest("PUT", reqURL, strings.NewReader(formData.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		server.handleEditComment(w, req)
+
+		resp := w.Result()
+		if resp.StatusCode != http.StatusSeeOther {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("Expected 303, got %d; body: %s", resp.StatusCode, body)
+		}
+
+		if !mockStorage.saveCalled {
+			t.Error("SaveReview should have been called")
+		}
+
+		if mockStorage.review.Comments[0].Body != "Updated text" {
+			t.Errorf("Expected body 'Updated text', got %q", mockStorage.review.Comments[0].Body)
+		}
+		// Editing should not touch line range or status.
+		if mockStorage.review.Comments[0].StartLine != 10 || mockStorage.review.Comments[0].Status != "open" {
+			t.Errorf("Edit should only change Body, got %+v", mockStorage.review.Comments[0])
+		}
+	})
+
+	t.Run("comment not found returns 404", func(t *testing.T) {
+		mockStorage.review = &models.Review{
+			Comments: []models.ReviewComment{
+				{ID: "comment-1", Body: "Exists"},
+			},
+		}
+
+		params := url.Values{}
+		params.Set("repo", "/test/repo")
+		params.Set("source_commit", "abc123")
+		params.Set("target_commit", "def456")
+		params.Set("comment_id", "nonexistent-id")
+
+		formData := url.Values{}
+		formData.Set("body", "Updated text")
+
+		reqURL := "/api/review/comment?" + params.Encode()
+		req := httptest.NewRequest("PUT", reqURL, strings.NewReader(formData.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		server.handleEditComment(w, req)
+
+		if w.Result().StatusCode != http.StatusNotFound {
+			t.Errorf("Expected 404, got %d", w.Result().StatusCode)
+		}
+	})
+
+	t.Run("missing comment_id returns 400", func(t *testing.T) {
+		params := url.Values{}
+		params.Set("repo", "/test/repo")
+		params.Set("source_commit", "abc123")
+		params.Set("target_commit", "def456")
+
+		formData := url.Values{}
+		formData.Set("body", "Updated text")
+
+		reqURL := "/api/review/comment?" + params.Encode()
+		req := httptest.NewRequest("PUT", reqURL, strings.NewReader(formData.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+
+		server.handleEditComment(w, req)
+
+		if w.Result().StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected 400 for missing comment_id, got %d", w.Result().StatusCode)
+		}
+	})
+
+	t.Run("missing body returns 400", func(t *testing.T) {
+		params := url.Values{}
+		params.Set("repo", "/test/repo")
+		params.Set("source_commit", "abc123")
+		params.Set("target_commit", "def456")
+		params.Set("comment_id", "comment-1")
+
+		req := httptest.NewRequest("PUT", "/api/review/comment?"+params.Encode(), nil)
+		w := httptest.NewRecorder()
+
+		server.handleEditComment(w, req)
+
+		if w.Result().StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected 400 for missing body, got %d", w.Result().StatusCode)
 		}
 	})
 }

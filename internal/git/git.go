@@ -44,6 +44,71 @@ func (r *Repository) GetBranches() ([]string, error) {
 	return branches, nil
 }
 
+// GetCurrentBranch returns the short name of the branch currently checked out
+// in the repository's working tree. Because git commands run with `-C r.Path`,
+// this reports the branch of the specific worktree that path points at, not the
+// main tree. A detached HEAD has no branch name, so an empty string (and no
+// error) is returned in that case.
+func (r *Repository) GetCurrentBranch() (string, error) {
+	cmd := exec.Command("git", "-C", r.Path, "branch", "--show-current")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to get current branch: %w", err)
+	}
+
+	return strings.TrimSpace(out.String()), nil
+}
+
+// GetDefaultBranch determines the repository's default branch — the branch a
+// feature branch is typically merged into (main, master, ...). It is resolved,
+// in order of preference:
+//  1. origin's advertised default via refs/remotes/origin/HEAD, when that
+//     symbolic ref resolves to a branch that exists locally;
+//  2. the first of a set of common default-branch names present locally;
+//  3. the first local branch git reports.
+//
+// The result is always validated against the local branch list so the caller
+// can safely pre-select it in a dropdown built from those same branches.
+func (r *Repository) GetDefaultBranch() (string, error) {
+	branches, err := r.GetBranches()
+	if err != nil {
+		return "", err
+	}
+
+	local := make(map[string]bool, len(branches))
+	for _, b := range branches {
+		local[b] = true
+	}
+
+	// Preferred: origin's default branch, when it maps to a local branch.
+	cmd := exec.Command("git", "-C", r.Path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if cmd.Run() == nil {
+		// symbolic-ref reports e.g. "origin/main"; strip the remote prefix.
+		ref := strings.TrimSpace(out.String())
+		if i := strings.IndexByte(ref, '/'); i >= 0 && i+1 < len(ref) {
+			if name := ref[i+1:]; local[name] {
+				return name, nil
+			}
+		}
+	}
+
+	// Fallback: the first conventional default-branch name present locally.
+	for _, cand := range []string{"main", "master", "develop", "devel", "trunk"} {
+		if local[cand] {
+			return cand, nil
+		}
+	}
+
+	// Last resort: whatever branch git listed first.
+	if len(branches) > 0 {
+		return branches[0], nil
+	}
+	return "", fmt.Errorf("no branches found")
+}
+
 // GetBranchCommitHash returns the commit hash for a branch
 func (r *Repository) GetBranchCommitHash(branch string) (string, error) {
 	cmd := exec.Command("git", "-C", r.Path, "rev-parse", branch)

@@ -520,6 +520,204 @@ describe('delete comment submission', () => {
   })
 })
 
+// ── Integration tests: edit comment ───────────────────────────────
+
+describe('edit comment', () => {
+  const SEARCH =
+    '?repo=/test&source=feat&target=main&source_commit=abc&target_commit=def&mode=branches&file=test.go'
+
+  let reloadSpy: ReturnType<typeof vi.fn>
+  let fetchSpy: ReturnType<typeof vi.fn>
+  let alertSpy: ReturnType<typeof vi.fn>
+
+  function setupDOMWithEdit() {
+    document.body.innerHTML = `
+      <table class="diff-table">
+        <tr class="diff-line" data-left-num="1" data-right-num="1" data-line-type="context">
+          <td class="diff-line-num" data-line-num="1" data-side="left">1</td>
+          <td class="diff-line-num" data-line-num="1" data-side="right">1</td>
+          <td>content</td>
+        </tr>
+        <tr class="diff-comment-row">
+          <td>
+            <div class="comment-view">
+              <div class="text-sm">Original body</div>
+              <button type="button" class="edit-comment-btn" data-testid="btn-comment-edit-42">Edit</button>
+            </div>
+            <form method="PUT" action="/api/comment/edit/42" class="comment-edit hidden">
+              <textarea name="body">Original body</textarea>
+              <button type="button" class="cancel-edit-btn" data-testid="btn-comment-edit-cancel-42">Cancel</button>
+              <button type="submit" data-testid="btn-comment-edit-save-42">Save</button>
+            </form>
+          </td>
+        </tr>
+      </table>
+      <div id="comment-form-container" class="hidden">
+        <form id="comment-form">
+          <input id="cf-file-path" type="hidden" />
+          <input id="cf-start-line" type="hidden" />
+          <input id="cf-end-line" type="hidden" />
+          <input id="cf-side" type="hidden" />
+          <textarea id="cf-body"></textarea>
+          <span id="comment-form-header"></span>
+          <button type="submit">Save</button>
+          <button id="cf-cancel" type="button">Cancel</button>
+        </form>
+      </div>
+    `
+  }
+
+  beforeEach(() => {
+    reloadSpy = vi.fn()
+    Object.defineProperty(window, 'location', {
+      value: {
+        ...window.location,
+        reload: reloadSpy,
+        hash: '',
+        search: SEARCH,
+      },
+      writable: true,
+      configurable: true,
+    })
+    alertSpy = vi.fn()
+    vi.stubGlobal('alert', alertSpy)
+    vi.mocked(saveCursorToHash).mockClear()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('clicking Edit swaps the view for the edit form', () => {
+    setupDOMWithEdit()
+    const api = initializeCommentSystem(() => ({ index: 0, side: 'right' }))!
+
+    expect(api.isEditFormVisible()).toBe(false)
+    ;(document.querySelector('.edit-comment-btn') as HTMLElement).click()
+
+    expect(document.querySelector('.comment-view')!.classList.contains('hidden')).toBe(true)
+    expect(document.querySelector('.comment-edit')!.classList.contains('hidden')).toBe(false)
+    expect(api.isEditFormVisible()).toBe(true)
+  })
+
+  it('Cancel reverts the textarea and hides the edit form', () => {
+    setupDOMWithEdit()
+    initializeCommentSystem(() => ({ index: 0, side: 'right' }))
+    ;(document.querySelector('.edit-comment-btn') as HTMLElement).click()
+
+    const textarea = document.querySelector(
+      '.comment-edit textarea'
+    ) as HTMLTextAreaElement
+    textarea.value = 'edited but not saved'
+    ;(document.querySelector('.cancel-edit-btn') as HTMLElement).click()
+
+    expect(textarea.value).toBe('Original body')
+    expect(document.querySelector('.comment-edit')!.classList.contains('hidden')).toBe(true)
+    expect(document.querySelector('.comment-view')!.classList.contains('hidden')).toBe(false)
+  })
+
+  it('hideAllCommentEdits reverts and hides an open edit form', () => {
+    setupDOMWithEdit()
+    const api = initializeCommentSystem(() => ({ index: 0, side: 'right' }))!
+    ;(document.querySelector('.edit-comment-btn') as HTMLElement).click()
+
+    const textarea = document.querySelector(
+      '.comment-edit textarea'
+    ) as HTMLTextAreaElement
+    textarea.value = 'edited but not saved'
+
+    api.hideAllCommentEdits()
+
+    expect(textarea.value).toBe('Original body')
+    expect(api.isEditFormVisible()).toBe(false)
+  })
+
+  it('submitting the edit form calls fetch with PUT and reloads on success', async () => {
+    setupDOMWithEdit()
+    fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    initializeCommentSystem(() => ({ index: 0, side: 'right' }))
+    const form = document.querySelector('.comment-edit') as HTMLFormElement
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledOnce()
+    })
+
+    const [url, opts] = fetchSpy.mock.calls[0]
+    expect(url).toBe('/api/comment/edit/42')
+    expect(opts.method).toBe('PUT')
+
+    await vi.waitFor(() => {
+      expect(reloadSpy).toHaveBeenCalledOnce()
+    })
+  })
+
+  it('Ctrl+Enter in the edit textarea submits the form', async () => {
+    setupDOMWithEdit()
+    fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    initializeCommentSystem(() => ({ index: 0, side: 'right' }))
+    const textarea = document.querySelector(
+      '.comment-edit textarea'
+    ) as HTMLTextAreaElement
+    textarea.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })
+    )
+
+    await vi.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledOnce()
+    })
+  })
+
+  it('re-enables button and alerts on HTTP error', async () => {
+    setupDOMWithEdit()
+    fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    initializeCommentSystem(() => ({ index: 0, side: 'right' }))
+    const form = document.querySelector('.comment-edit') as HTMLFormElement
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Failed to save comment (status 500). Please try again.'
+      )
+    })
+
+    const btn = document.querySelector(
+      '.comment-edit [type="submit"]'
+    ) as HTMLButtonElement
+    expect(btn.disabled).toBe(false)
+    expect(reloadSpy).not.toHaveBeenCalled()
+  })
+
+  it('re-enables button and alerts on network error', async () => {
+    setupDOMWithEdit()
+    fetchSpy = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    vi.stubGlobal('fetch', fetchSpy)
+
+    initializeCommentSystem(() => ({ index: 0, side: 'right' }))
+    const form = document.querySelector('.comment-edit') as HTMLFormElement
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Network error — comment was not saved.'
+      )
+    })
+
+    const btn = document.querySelector(
+      '.comment-edit [type="submit"]'
+    ) as HTMLButtonElement
+    expect(btn.disabled).toBe(false)
+    expect(reloadSpy).not.toHaveBeenCalled()
+  })
+})
+
 // ── Integration tests: drag-select flow ──────────────────────────
 
 describe('drag-select flow', () => {

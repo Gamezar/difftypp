@@ -92,6 +92,8 @@ export interface CommentSystemApi {
   clearLineSelection: () => void
   highlightRange: (start: number, end: number, side: string) => void
   isCommentFormVisible: () => boolean
+  isEditFormVisible: () => boolean
+  hideAllCommentEdits: () => void
 }
 
 // ── DOM wiring ───────────────────────────────────────────────────
@@ -205,6 +207,21 @@ export function initializeCommentSystem(
 
   function isCommentFormVisible(): boolean {
     return !commentFormContainer!.classList.contains('hidden')
+  }
+
+  function isEditFormVisible(): boolean {
+    return diffTable!.querySelector('.comment-edit:not(.hidden)') !== null
+  }
+
+  function hideAllCommentEdits(): void {
+    diffTable!.querySelectorAll('.comment-edit:not(.hidden)').forEach((editBox) => {
+      const row = editBox.closest('.diff-comment-row')
+      const view = row?.querySelector('.comment-view')
+      const textarea = editBox.querySelector('textarea') as HTMLTextAreaElement | null
+      if (textarea) textarea.value = textarea.defaultValue
+      editBox.classList.add('hidden')
+      view?.classList.remove('hidden')
+    })
   }
 
   // ── Event handlers ──
@@ -335,11 +352,85 @@ export function initializeCommentSystem(
     })
   })
 
+  // Toggle a comment into edit mode
+  document.querySelectorAll('.edit-comment-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('.diff-comment-row')
+      const view = row?.querySelector('.comment-view')
+      const editBox = row?.querySelector('.comment-edit')
+      if (!view || !editBox) return
+      view.classList.add('hidden')
+      editBox.classList.remove('hidden')
+      const textarea = editBox.querySelector('textarea') as HTMLTextAreaElement | null
+      textarea?.focus()
+    })
+  })
+
+  // Cancel an in-progress edit without saving
+  document.querySelectorAll('.cancel-edit-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('.diff-comment-row')
+      const view = row?.querySelector('.comment-view')
+      const editBox = row?.querySelector('.comment-edit')
+      const textarea = editBox?.querySelector('textarea') as HTMLTextAreaElement | null
+      if (textarea) textarea.value = textarea.defaultValue
+      editBox?.classList.add('hidden')
+      view?.classList.remove('hidden')
+    })
+  })
+
+  // Handle edit forms — use fetch (PUT) to avoid a full page reload to the top
+  document.querySelectorAll('.comment-edit').forEach((form) => {
+    const textarea = form.querySelector('textarea') as HTMLTextAreaElement | null
+    textarea?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault()
+        ;(form as HTMLFormElement).requestSubmit()
+      }
+    })
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault()
+      const submitBtn = form.querySelector(
+        '[type="submit"]'
+      ) as HTMLButtonElement
+      if (submitBtn.disabled) return
+      submitBtn.disabled = true
+      const originalText = submitBtn.innerHTML
+      submitBtn.textContent = 'Saving...'
+      const action = (form as HTMLFormElement).getAttribute('action')!
+      const formData = new URLSearchParams(new FormData(form as HTMLFormElement) as never)
+      const cursor = getCursorState()
+      saveCursorToHash(cursor.index, cursor.side)
+      fetch(action, { method: 'PUT', body: formData })
+        .then((resp) => {
+          if (resp.ok) {
+            window.location.reload()
+          } else {
+            submitBtn.disabled = false
+            submitBtn.innerHTML = originalText
+            alert(
+              'Failed to save comment (status ' +
+                resp.status +
+                '). Please try again.'
+            )
+          }
+        })
+        .catch(() => {
+          submitBtn.disabled = false
+          submitBtn.innerHTML = originalText
+          alert('Network error — comment was not saved.')
+        })
+    })
+  })
+
   return {
     showCommentForm,
     hideCommentForm,
     clearLineSelection,
     highlightRange,
     isCommentFormVisible,
+    isEditFormVisible,
+    hideAllCommentEdits,
   }
 }

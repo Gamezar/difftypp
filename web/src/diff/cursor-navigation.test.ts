@@ -543,6 +543,8 @@ describe('initializeCursorNavigation with commentApi', () => {
     clearLineSelection: ReturnType<typeof vi.fn>
     highlightRange: ReturnType<typeof vi.fn>
     isCommentFormVisible: ReturnType<typeof vi.fn>
+    isEditFormVisible: ReturnType<typeof vi.fn>
+    hideAllCommentEdits: ReturnType<typeof vi.fn>
   }
 
   beforeEach(() => {
@@ -553,6 +555,8 @@ describe('initializeCursorNavigation with commentApi', () => {
       clearLineSelection: vi.fn(),
       highlightRange: vi.fn(),
       isCommentFormVisible: vi.fn().mockReturnValue(false),
+      isEditFormVisible: vi.fn().mockReturnValue(false),
+      hideAllCommentEdits: vi.fn(),
     }
   })
 
@@ -577,6 +581,7 @@ describe('initializeCursorNavigation with commentApi', () => {
         </tr>
         <tr class="diff-comment-row" id="comment-1">
           <td colspan="3">
+            <button type="button" class="edit-comment-btn" data-testid="btn-comment-edit-1">Edit</button>
             <form action="/api/comment/resolve/1">
               <button data-testid="btn-comment-resolve-1">Resolve</button>
             </form>
@@ -638,6 +643,39 @@ describe('initializeCursorNavigation with commentApi', () => {
       const args = commentApi.showCommentForm.mock.calls[0]
       // startLine <= endLine
       expect(args[0]).toBeLessThanOrEqual(args[1])
+    })
+  })
+
+  describe('e key (edit comment)', () => {
+    it('clicks the edit button for the comment on the current line', () => {
+      setupDiffWithComments()
+      initializeCursorNavigation(commentApi, { signal: ac.signal })
+      const editBtn = document.querySelector(
+        '[data-testid="btn-comment-edit-1"]'
+      ) as HTMLButtonElement
+      const clickSpy = vi.fn()
+      editBtn.addEventListener('click', clickSpy)
+
+      press('j') // move to line 0 (which has a comment)
+      press('e')
+
+      expect(clickSpy).toHaveBeenCalled()
+    })
+
+    it('ignores e key when line has no comment', () => {
+      setupDiffWithComments()
+      initializeCursorNavigation(commentApi, { signal: ac.signal })
+      const editBtn = document.querySelector(
+        '[data-testid="btn-comment-edit-1"]'
+      ) as HTMLButtonElement
+      const clickSpy = vi.fn()
+      editBtn.addEventListener('click', clickSpy)
+
+      press('j') // line 0 has comment
+      press('j') // line 1 has no comment
+      press('e')
+
+      expect(clickSpy).not.toHaveBeenCalled()
     })
   })
 
@@ -849,6 +887,17 @@ describe('initializeCursorNavigation with commentApi', () => {
       press('j') // activate cursor
       press('Escape')
       expect(commentApi.hideCommentForm).toHaveBeenCalled()
+    })
+  })
+
+  describe('Escape with edit form visible', () => {
+    it('hides edit form when visible', () => {
+      setupDiffWithComments()
+      commentApi.isEditFormVisible.mockReturnValue(true)
+      initializeCursorNavigation(commentApi, { signal: ac.signal })
+      press('j') // activate cursor
+      press('Escape')
+      expect(commentApi.hideAllCommentEdits).toHaveBeenCalled()
     })
   })
 

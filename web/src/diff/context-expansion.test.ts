@@ -31,6 +31,30 @@ describe('computeFetchRange', () => {
       computeFetchRange({ rightStart: 0, rightEnd: 10, leftStart: 0 }, 20)
     ).toBeNull()
   })
+
+  it('reveals one chunk from the bottom of a large bounded gap when direction is up', () => {
+    expect(
+      computeFetchRange({ rightStart: 5, rightEnd: 120, leftStart: 5 }, 20, 'up')
+    ).toEqual({ start: 101, end: 120 })
+  })
+
+  it('clamps the up chunk to the start of a small bounded gap', () => {
+    expect(
+      computeFetchRange({ rightStart: 5, rightEnd: 10, leftStart: 5 }, 20, 'up')
+    ).toEqual({ start: 5, end: 10 })
+  })
+
+  it('ignores direction for the bottom gap (null rightEnd)', () => {
+    expect(
+      computeFetchRange({ rightStart: 42, rightEnd: null, leftStart: 40 }, 20, 'up')
+    ).toEqual({ start: 42, end: 61 })
+  })
+
+  it('returns null for direction up when nothing is hidden', () => {
+    expect(
+      computeFetchRange({ rightStart: 11, rightEnd: 10, leftStart: 11 }, 20, 'up')
+    ).toBeNull()
+  })
 })
 
 describe('buildContextRow', () => {

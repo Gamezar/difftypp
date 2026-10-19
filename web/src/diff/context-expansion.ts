@@ -2,19 +2,32 @@
  * GitHub-style "expand context" for the diff view.
  *
  * Each collapsed region of unchanged lines is represented by a hunk-header row
- * carrying data-gap-* attributes and a single "unfold" control. Clicking it
- * fetches the next chunk of hidden lines from /api/file-context and splices
- * them into the diff table as real context rows, so cursor navigation and
- * inline comments work on them too. Each click reveals one more chunk
- * (GitHub-style); a separate "×" control collapses the region back.
+ * carrying data-gap-* attributes. Bounded gaps (between two hunks) get two
+ * controls — expand-down grows from the top of the gap (the hunk above) and
+ * expand-up grows from the bottom of the gap (the hunk below) — so context can
+ * be pulled in from whichever hunk is actually being read, not just from the
+ * top every time. The unbounded trailing gap (end of file) only supports
+ * expand-down since there is no lower hunk to anchor against. Clicking a
+ * control fetches the next chunk of hidden lines from /api/file-context and
+ * splices them into the diff table as real context rows, so cursor navigation
+ * and inline comments work on them too. A separate "×" control collapses the
+ * region back.
  */
 
 // Lines revealed per click — incremental expansion, like GitHub.
 const CHUNK = 20
 
-// GitHub's "unfold" octicon (chevrons pointing apart) — expands collapsed lines.
+// GitHub's "unfold" octicon (chevrons pointing apart) — used where only one
+// expand direction is possible (the trailing end-of-file gap).
 const UNFOLD_SVG =
   '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8.177.677l2.896 2.896a.25.25 0 0 1-.177.427H8.75v1.25a.75.75 0 0 1-1.5 0V4H5.104a.25.25 0 0 1-.177-.427L7.823.677a.25.25 0 0 1 .354 0zM7.25 10.75a.75.75 0 0 1 1.5 0V12h2.146a.25.25 0 0 1 .177.427l-2.896 2.896a.25.25 0 0 1-.354 0l-2.896-2.896A.25.25 0 0 1 5.104 12H7.25v-1.25zm-5-2a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5zM6 8a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1 0-1.5h.5A.75.75 0 0 1 6 8zm2.25.75a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5zM12 8a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1 0-1.5h.5A.75.75 0 0 1 12 8zm2.25.75a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5z"/></svg>'
+
+// Directional chevrons for bounded gaps — point toward the hunk each control
+// pulls context from.
+const FOLD_DOWN_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 6L12 6L8 10Z"/></svg>'
+const FOLD_UP_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 10L12 10L8 6Z"/></svg>'
 
 // A close/remove "×" octicon — visually distinct from the expand control so it
 // reads as "undo this expansion" rather than "expand more".
@@ -27,20 +40,29 @@ export interface GapBounds {
   leftStart: number
 }
 
+export type ExpandDirection = 'down' | 'up'
+
 /**
  * Compute the 1-based inclusive right-side line range to fetch for the next
- * chunk, starting from the top of the remaining gap. Bounded gaps are clamped
- * to their end; the bottom gap (null rightEnd) just takes a full chunk.
+ * chunk. 'down' grows from the top of the remaining gap (toward the hunk
+ * below); 'up' grows from the bottom of the remaining gap (toward the hunk
+ * above) and is only meaningful for bounded gaps. The bottom gap (null
+ * rightEnd) always takes a full chunk from its start, regardless of
+ * direction, since there's no lower boundary to anchor 'up' against.
  * Returns null when nothing is hidden.
  */
 export function computeFetchRange(
   bounds: GapBounds,
-  chunk: number = CHUNK
+  chunk: number = CHUNK,
+  direction: ExpandDirection = 'down'
 ): { start: number; end: number } | null {
   const { rightStart, rightEnd } = bounds
   if (rightStart < 1) return null
   if (rightEnd === null) return { start: rightStart, end: rightStart + chunk - 1 }
   if (rightStart > rightEnd) return null
+  if (direction === 'up') {
+    return { start: Math.max(rightStart, rightEnd - chunk + 1), end: rightEnd }
+  }
   return { start: rightStart, end: Math.min(rightEnd, rightStart + chunk - 1) }
 }
 
@@ -66,7 +88,8 @@ function ensureGroupId(anchor: HTMLElement): string {
 function makeControlButton(
   testId: string,
   action: 'expand' | 'collapse',
-  svg: string
+  svg: string,
+  direction?: ExpandDirection
 ): HTMLButtonElement {
   const btn = document.createElement('button')
   btn.type = 'button'
@@ -74,7 +97,16 @@ function makeControlButton(
     action === 'collapse' ? 'diff-expand-btn diff-collapse-btn' : 'diff-expand-btn'
   btn.setAttribute('data-testid', testId)
   btn.setAttribute('data-action', action)
-  btn.title = action === 'expand' ? 'Expand hidden lines' : 'Collapse expanded lines'
+  if (direction) btn.setAttribute('data-direction', direction)
+  if (action === 'collapse') {
+    btn.title = 'Collapse expanded lines'
+  } else if (direction === 'up') {
+    btn.title = 'Expand hidden lines above (toward this hunk)'
+  } else if (direction === 'down') {
+    btn.title = 'Expand hidden lines below'
+  } else {
+    btn.title = 'Expand hidden lines'
+  }
   btn.innerHTML = svg
   return btn
 }
@@ -95,9 +127,12 @@ function hasMoreToExpand(anchor: HTMLElement, isBottom: boolean): boolean {
 }
 
 /**
- * Render the expander's controls for its current state: an unfold control while
- * lines remain hidden, and a separate "×" collapse control once anything has
- * been revealed (so it can be undone). Falls back to "…" if neither applies.
+ * Render the expander's controls for its current state: expand control(s)
+ * while lines remain hidden, and a separate "×" collapse control once
+ * anything has been revealed (so it can be undone). Bounded gaps get both an
+ * expand-down and an expand-up control so context can be pulled toward
+ * whichever adjacent hunk is being read; the bottom gap only supports
+ * expand-down. Falls back to "…" if neither applies.
  */
 function updateControls(anchor: HTMLElement, isBottom: boolean): void {
   const cell = anchor.querySelector('.diff-expand-cell')
@@ -107,9 +142,12 @@ function updateControls(anchor: HTMLElement, isBottom: boolean): void {
 
   cell.textContent = ''
   if (more) {
-    cell.appendChild(
-      makeControlButton(isBottom ? 'expand-bottom' : 'expand-all', 'expand', UNFOLD_SVG)
-    )
+    if (isBottom) {
+      cell.appendChild(makeControlButton('expand-bottom', 'expand', UNFOLD_SVG))
+    } else {
+      cell.appendChild(makeControlButton('expand-down', 'expand', FOLD_DOWN_SVG, 'down'))
+      cell.appendChild(makeControlButton('expand-up', 'expand', FOLD_UP_SVG, 'up'))
+    }
   }
   if (revealed > 0) {
     cell.appendChild(
@@ -236,6 +274,8 @@ async function handleExpandClick(btn: HTMLButtonElement): Promise<void> {
   if (!anchor || btn.disabled) return
 
   const isBottom = anchor.classList.contains('diff-bottom-expander')
+  const direction: ExpandDirection =
+    btn.getAttribute('data-direction') === 'up' ? 'up' : 'down'
 
   const rightStart = parseInt(anchor.getAttribute('data-gap-right-start') || '0', 10)
   const leftStart = parseInt(anchor.getAttribute('data-gap-left-start') || '0', 10)
@@ -245,7 +285,7 @@ async function handleExpandClick(btn: HTMLButtonElement): Promise<void> {
 
   if (rightStart < 1) return
 
-  const range = computeFetchRange({ rightStart, rightEnd, leftStart })
+  const range = computeFetchRange({ rightStart, rightEnd, leftStart }, CHUNK, direction)
   if (!range) return
 
   // The left/right line-number offset is invariant across a gap of unchanged
@@ -281,10 +321,14 @@ async function handleExpandClick(btn: HTMLButtonElement): Promise<void> {
   }
 
   // Remember the original collapsed-state bounds once, so the whole region can
-  // be re-folded later regardless of how many chunks get revealed.
+  // be re-folded later regardless of how many chunks get revealed from either
+  // end.
   if (!anchor.hasAttribute('data-collapsed-right-start')) {
     anchor.setAttribute('data-collapsed-right-start', String(rightStart))
     anchor.setAttribute('data-collapsed-left-start', String(leftStart))
+    if (rightEnd !== null) {
+      anchor.setAttribute('data-collapsed-right-end', String(rightEnd))
+    }
   }
 
   const groupId = ensureGroupId(anchor)
@@ -298,10 +342,15 @@ async function handleExpandClick(btn: HTMLButtonElement): Promise<void> {
   })
   insertRows(anchor, groupId, rows)
 
-  // Advance the remaining gap by the number of lines actually revealed.
+  // Shrink the remaining gap by the number of lines actually revealed, from
+  // whichever end this chunk came from.
   const revealed = lines.length
-  anchor.setAttribute('data-gap-right-start', String(range.start + revealed))
-  anchor.setAttribute('data-gap-left-start', String(leftStart + revealed))
+  if (direction === 'up' && rightEnd !== null) {
+    anchor.setAttribute('data-gap-right-end', String(rightEnd - revealed))
+  } else {
+    anchor.setAttribute('data-gap-right-start', String(range.start + revealed))
+    anchor.setAttribute('data-gap-left-start', String(leftStart + revealed))
+  }
   if (isBottom && (data.eof || revealed < range.end - range.start + 1)) {
     anchor.setAttribute('data-eof', '1')
   }
@@ -328,10 +377,13 @@ function handleCollapseClick(btn: HTMLButtonElement): void {
   // Restore the original collapsed-state bounds captured at first expand.
   const rs = anchor.getAttribute('data-collapsed-right-start')
   const ls = anchor.getAttribute('data-collapsed-left-start')
+  const re = anchor.getAttribute('data-collapsed-right-end')
   if (rs) anchor.setAttribute('data-gap-right-start', rs)
   if (ls) anchor.setAttribute('data-gap-left-start', ls)
+  if (re) anchor.setAttribute('data-gap-right-end', re)
   anchor.removeAttribute('data-collapsed-right-start')
   anchor.removeAttribute('data-collapsed-left-start')
+  anchor.removeAttribute('data-collapsed-right-end')
   anchor.removeAttribute('data-eof')
 
   updateControls(anchor, isBottom)

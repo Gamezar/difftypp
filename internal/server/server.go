@@ -333,6 +333,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("DELETE /api/repository/remove", s.handleRemoveRepository)
 	mux.HandleFunc("POST /api/review-state", s.handleReviewState)
 	mux.HandleFunc("POST /api/review/comment", s.handleAddComment)
+	mux.HandleFunc("PUT /api/review/comment", s.handleEditComment)
 	mux.HandleFunc("DELETE /api/review/comment", s.handleDeleteComment)
 	mux.HandleFunc("POST /api/review/comment/resolve", s.handleResolveComment)
 	mux.HandleFunc("POST /api/review/submit", s.handleSubmitReview)
@@ -774,19 +775,32 @@ func (s *Server) handleCompare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-select branches if not specified
-	if sourceBranch == "" && len(branches) > 0 {
-		// Try to use the second branch (usually a feature branch) as source
-		if len(branches) > 1 {
-			sourceBranch = branches[1]
-		} else {
-			sourceBranch = branches[0]
+	// Pre-select useful defaults when the user hasn't specified branches:
+	// target = the repository's default branch (main/master/...), source = the
+	// branch currently checked out in this working tree. This matches the common
+	// "review my current branch against main" flow. Both are best-effort — on any
+	// error the field is left blank for the user to choose.
+	if targetBranch == "" {
+		if def, err := repo.GetDefaultBranch(); err == nil {
+			targetBranch = def
 		}
 	}
 
-	if targetBranch == "" && len(branches) > 0 {
-		// Usually main/master is the first branch
-		targetBranch = branches[0]
+	if sourceBranch == "" {
+		if cur, err := repo.GetCurrentBranch(); err == nil {
+			sourceBranch = cur
+		}
+		// If the current branch is the default branch (or HEAD is detached),
+		// comparing it against the target would be an empty diff — fall back to
+		// the first other branch so the default selection is actually useful.
+		if sourceBranch == "" || sourceBranch == targetBranch {
+			for _, b := range branches {
+				if b != targetBranch {
+					sourceBranch = b
+					break
+				}
+			}
+		}
 	}
 
 	data := map[string]interface{}{
@@ -2035,6 +2049,50 @@ func (s *Server) handleAddComment(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect back to diff view
 	redirectURL := buildDiffRedirectURL(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit, p.Mode, filePath)
+	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+}
+
+// handleEditComment handles PUT /api/review/comment — updates a comment's body
+func (s *Server) handleEditComment(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		s.renderError(w, "Invalid Form", "Invalid form data submitted", http.StatusBadRequest)
+		return
+	}
+
+	p := parseDiffParams(r)
+	commentID := r.URL.Query().Get("comment_id")
+	body := r.FormValue("body")
+
+	if p.RepoPath == "" || p.SourceCommit == "" || p.TargetCommit == "" || commentID == "" || body == "" {
+		s.renderError(w, "Missing Parameters", "Missing required parameters for editing a comment", http.StatusBadRequest)
+		return
+	}
+
+	review, err := s.storage.LoadReview(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit)
+	if err != nil {
+		s.renderError(w, "Review Error", fmt.Sprintf("Failed to load review: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	found := false
+	for i := range review.Comments {
+		if review.Comments[i].ID == commentID {
+			found = true
+			review.Comments[i].Body = body
+			break
+		}
+	}
+	if !found {
+		s.renderError(w, "Not Found", "Comment not found", http.StatusNotFound)
+		return
+	}
+
+	if err := s.storage.SaveReview(review, p.RepoPath); err != nil {
+		s.renderError(w, "Storage Error", fmt.Sprintf("Failed to save review: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	redirectURL := buildDiffRedirectURL(p.RepoPath, p.SourceBranch, p.TargetBranch, p.SourceCommit, p.TargetCommit, p.Mode, p.FilePath)
 	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 }
 

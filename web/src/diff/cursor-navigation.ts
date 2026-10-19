@@ -51,6 +51,7 @@ export function getLineNum(
 export function computeFooterHints(opts: {
   deleteConfirming: boolean
   commentFormVisible: boolean
+  editFormVisible?: boolean
   cursorActive: boolean
   hasSelection: boolean
   hasCommentOnLine: boolean
@@ -58,13 +59,13 @@ export function computeFooterHints(opts: {
   if (opts.deleteConfirming) {
     return '[y] Confirm delete [Esc] Cancel'
   }
-  if (opts.commentFormVisible) {
+  if (opts.commentFormVisible || opts.editFormVisible) {
     return '[Ctrl+Enter] Save comment [Esc] Cancel'
   }
   if (opts.cursorActive) {
     const parts = ['[j/k] Move', '[c] Comment']
     if (opts.hasSelection) parts[0] = '[J/K] Extend'
-    if (opts.hasCommentOnLine) parts.push('[x] Resolve', '[d] Delete')
+    if (opts.hasCommentOnLine) parts.push('[e] Edit', '[x] Resolve', '[d] Delete')
     parts.push('[a/r/s] Review', '[Shift+Q] Back', '[?] Help')
     return parts.join('  ')
   }
@@ -302,6 +303,7 @@ export function initializeCursorNavigation(
       computeFooterHints({
         deleteConfirming: state.deleteConfirming,
         commentFormVisible: commentApi?.isCommentFormVisible() ?? false,
+        editFormVisible: commentApi?.isEditFormVisible() ?? false,
         cursorActive: state.index >= 0 && diffLines.length > 0,
         hasSelection: state.selectionAnchor >= 0,
         hasCommentOnLine:
@@ -377,6 +379,18 @@ export function initializeCursorNavigation(
       effSide,
       null
     )
+    updateFooterForState()
+  }
+
+  function editCommentAtCursor(): void {
+    if (state.index < 0) return
+    const comment = getFirstComment(diffLines[state.index])
+    if (!comment) return
+    const editBtn = comment.querySelector(
+      '.edit-comment-btn'
+    ) as HTMLElement | null
+    if (!editBtn) return
+    editBtn.click()
     updateFooterForState()
   }
 
@@ -504,6 +518,11 @@ export function initializeCursorNavigation(
       updateFooterForState()
       return
     }
+    if (commentApi?.isEditFormVisible()) {
+      commentApi.hideAllCommentEdits()
+      updateFooterForState()
+      return
+    }
     if (state.selectionAnchor >= 0) {
       state.selectionAnchor = -1
       commentApi?.clearLineSelection()
@@ -626,6 +645,18 @@ export function initializeCursorNavigation(
       event.preventDefault()
       openCommentAtCursor()
       return true
+    }
+
+    // e — edit
+    if (event.key === 'e' && !event.ctrlKey && !event.metaKey) {
+      if (
+        state.index >= 0 &&
+        hasCommentOnLine(diffLines[state.index])
+      ) {
+        event.preventDefault()
+        editCommentAtCursor()
+        return true
+      }
     }
 
     // x — resolve/reopen

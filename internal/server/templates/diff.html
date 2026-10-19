@@ -9,7 +9,7 @@
 <tr class="diff-comment-row {{ if eq .Status "resolved" }}diff-comment-resolved{{ end }}">
     <td colspan="{{ $.Colspan }}" class="px-4 py-2
         {{ if eq .Status "resolved" }}bg-gray-50 opacity-60{{ else }}bg-indigo-50 border-l-4 border-indigo-400{{ end }}">
-        <div class="flex items-start justify-between gap-2">
+        <div class="comment-view flex items-start justify-between gap-2">
             <div class="flex-1">
                 {{ if eq .Status "resolved" }}
                 <details class="resolved-comment">
@@ -25,6 +25,10 @@
                 </div>
             </div>
             <div class="flex items-center gap-1 shrink-0">
+                {{/* Edit */}}
+                <button type="button" class="edit-comment-btn px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200" data-testid="btn-comment-edit-{{.ID}}">
+                    <span class="inline-flex items-center">Edit <span class="ml-1 key-hint" aria-hidden="true">e</span></span>
+                </button>
                 {{/* Resolve / Re-open toggle */}}
                 <form method="POST" action="/api/review/comment/resolve?repo={{urlquery $.RepoPath}}&source={{urlquery $.SourceBranch}}&target={{urlquery $.TargetBranch}}&source_commit={{urlquery $.SourceCommit}}&target_commit={{urlquery $.TargetCommit}}&comment_id={{urlquery .ID}}&file={{urlquery $.FilePath}}&mode={{urlquery $.DiffMode}}" class="inline">
                     <button type="submit" class="px-2 py-1 text-xs rounded
@@ -42,6 +46,16 @@
                 </form>
             </div>
         </div>
+        {{/* Edit form — hidden until the Edit button toggles it on */}}
+        <form method="PUT" action="/api/review/comment?repo={{urlquery $.RepoPath}}&source={{urlquery $.SourceBranch}}&target={{urlquery $.TargetBranch}}&source_commit={{urlquery $.SourceCommit}}&target_commit={{urlquery $.TargetCommit}}&comment_id={{urlquery .ID}}&file={{urlquery $.FilePath}}&mode={{urlquery $.DiffMode}}" class="comment-edit hidden mt-1">
+            <textarea name="body" rows="3" class="w-full border rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" data-testid="cf-edit-body-{{.ID}}">{{ .Body }}</textarea>
+            <div class="flex justify-end gap-1 mt-1">
+                <button type="button" class="cancel-edit-btn px-2 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300" data-testid="btn-comment-edit-cancel-{{.ID}}">Cancel</button>
+                <button type="submit" class="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700" data-testid="btn-comment-edit-save-{{.ID}}">
+                    <span class="inline-flex items-center">Save <span class="ml-1 key-hint-light" aria-hidden="true">Ctrl+Enter</span></span>
+                </button>
+            </div>
+        </form>
     </td>
 </tr>
 {{ end }}
@@ -66,6 +80,19 @@
      expand/collapse control (unified + split, top + bottom), so the SVG path
      lives in exactly one place. */}}
 {{ define "expandIcon" }}<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8.177.677l2.896 2.896a.25.25 0 0 1-.177.427H8.75v1.25a.75.75 0 0 1-1.5 0V4H5.104a.25.25 0 0 1-.177-.427L7.823.677a.25.25 0 0 1 .354 0zM7.25 10.75a.75.75 0 0 1 1.5 0V12h2.146a.25.25 0 0 1 .177.427l-2.896 2.896a.25.25 0 0 1-.354 0l-2.896-2.896A.25.25 0 0 1 5.104 12H7.25v-1.25zm-5-2a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5zM6 8a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1 0-1.5h.5A.75.75 0 0 1 6 8zm2.25.75a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5zM12 8a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1 0-1.5h.5A.75.75 0 0 1 12 8zm2.25.75a.75.75 0 0 0 0-1.5h-.5a.75.75 0 0 0 0 1.5h.5z"/></svg>{{ end }}
+
+{{/* expandDownIcon / expandUpIcon are the directional chevrons for a bounded
+     gap's two controls: expand-down pulls context toward the hunk below,
+     expand-up pulls context toward the hunk above. */}}
+{{ define "expandDownIcon" }}<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 6L12 6L8 10Z"/></svg>{{ end }}
+{{ define "expandUpIcon" }}<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 10L12 10L8 6Z"/></svg>{{ end }}
+
+{{/* expandControls renders the expand button(s) for a hunk-header gap cell.
+     Bounded gaps get both directions (down = toward the hunk below, up =
+     toward the hunk above); the caller passes HasGap directly since the
+     bottom (end-of-file) expander is rendered separately with a single
+     always-down control. */}}
+{{ define "expandControls" }}<button type="button" class="diff-expand-btn" data-action="expand" data-direction="down" title="Expand hidden lines below" data-testid="expand-down">{{ template "expandDownIcon" }}</button><button type="button" class="diff-expand-btn" data-action="expand" data-direction="up" title="Expand hidden lines above (toward this hunk)" data-testid="expand-up">{{ template "expandUpIcon" }}</button>{{ end }}
 
 {{define "diff.html"}}
 <div class="diff-page-container {{ if .SelectedFile }}has-sidebar{{ end }} {{ if .PastReviews }}has-right-sidebar{{ end }}">
@@ -246,9 +273,7 @@
                             <tr class="diff-hunk-header{{ if $gap.HasGap }} diff-expandable{{ end }}"
                                 {{ if $gap.HasGap }}data-gap-right-start="{{$gap.RightStart}}" data-gap-right-end="{{$gap.RightEnd}}" data-gap-left-start="{{$gap.LeftStart}}" data-gap-left-end="{{$gap.LeftEnd}}"{{ end }}>
                                 <td class="diff-line-num diff-expand-cell bg-blue-50 text-blue-400 text-center px-1 select-none">
-                                    {{ if $gap.HasGap }}
-                                        <button type="button" class="diff-expand-btn" data-action="expand" title="Expand hidden lines" data-testid="expand-all">{{ template "expandIcon" }}</button>
-                                    {{ else }}...{{ end }}
+                                    {{ if $gap.HasGap }}{{ template "expandControls" }}{{ else }}...{{ end }}
                                 </td>
                                 <td class="bg-blue-50 text-blue-600 px-3 py-1 text-xs" colspan="3">
                                     @@ -{{$hunk.StartLine}},{{$hunk.LineCount}} @@{{ if $hunk.Context }} {{$hunk.Context}}{{ end }}
@@ -327,9 +352,7 @@
                             <tr class="diff-hunk-header{{ if $gap.HasGap }} diff-expandable{{ end }}"
                                 {{ if $gap.HasGap }}data-gap-right-start="{{$gap.RightStart}}" data-gap-right-end="{{$gap.RightEnd}}" data-gap-left-start="{{$gap.LeftStart}}" data-gap-left-end="{{$gap.LeftEnd}}"{{ end }}>
                                 <td class="diff-line-num diff-expand-cell bg-blue-50 text-blue-400 text-center px-1 select-none" colspan="2">
-                                    {{ if $gap.HasGap }}
-                                        <button type="button" class="diff-expand-btn" data-action="expand" title="Expand hidden lines" data-testid="expand-all">{{ template "expandIcon" }}</button>
-                                    {{ else }}...{{ end }}
+                                    {{ if $gap.HasGap }}{{ template "expandControls" }}{{ else }}...{{ end }}
                                 </td>
                                 <td class="bg-blue-50 text-blue-600 px-3 py-1 text-xs">
                                     @@ -{{$hunk.StartLine}},{{$hunk.LineCount}} @@{{ if $hunk.Context }} {{$hunk.Context}}{{ end }}
@@ -558,6 +581,7 @@
                 <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Previous / next comment</td></tr>
                 <tr><th colspan="2" style="padding-top:0.5rem">Comments</th></tr>
                 <tr><td><kbd>c</kbd></td><td>Add comment on cursor / selection</td></tr>
+                <tr><td><kbd>e</kbd></td><td>Edit comment</td></tr>
                 <tr><td><kbd>x</kbd></td><td>Resolve / re-open comment</td></tr>
                 <tr><td><kbd>d</kbd></td><td>Delete comment (with confirmation)</td></tr>
                 <tr><td><kbd>Ctrl+Enter</kbd></td><td>Save comment (in textarea)</td></tr>
@@ -804,6 +828,8 @@
     }
     .diff-expand-btn svg { width: 13px; height: 13px; display: block; }
     .diff-expand-btn:hover { background: #bfdbfe; color: #1d4ed8; }
+    /* Small gap between the down/up expand controls on a bounded gap. */
+    .diff-expand-btn + .diff-expand-btn { margin-left: 2px; }
     /* Collapse ("×") control — gray, with a red "remove" hover, so it never
        reads as another expand action. */
     .diff-collapse-btn { color: #6b7280; }
